@@ -1,32 +1,35 @@
-import os
-from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Annotated
 
-from dotenv import load_dotenv
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-@dataclass(frozen=True)
-class Settings:
+class ThinkingLevel(str, Enum):
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    XHIGH = "xhigh"
+
+
+class Settings(BaseSettings):
+    api_key: str
     base_url: str
     model: str
-    api_key: str
 
-    @classmethod
-    def from_environment(cls) -> "Settings":
-        load_dotenv()
+    enable_thinking: ThinkingLevel = ThinkingLevel.NONE
+    temperature: Annotated[float, Field(ge=0, le=2)] = 0.7
+    history_limit: Annotated[int, Field(ge=2)] = 16
+    default_world: str = "Фэнтезийный мир, в котором древняя магия постепенно возвращается."
+    default_story: str = "Герой оказывается перед загадкой, которая может изменить его жизнь."
+    default_character_name: str = "Безымянный герой"
+    default_character_role: str = "странник"
+    default_character_goal: str = "раскрыть тайну"
+    default_genre: str = "фэнтези"
 
-        values = {
-            "BASE_URL": os.getenv("BASE_URL", "").strip(),
-            "MODEL": os.getenv("MODEL", "").strip(),
-            "API_KEY": os.getenv("API_KEY", "").strip(),
-        }
-        missing_settings = [
-            name for name, value in values.items() if not value or value.lower().startswith("your_")
-        ]
-        if missing_settings:
-            raise ValueError("Заполни настройки в .env: " + ", ".join(missing_settings))
-
-        return cls(
-            base_url=values["BASE_URL"],
-            model=values["MODEL"],
-            api_key=values["API_KEY"],
-        )
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parents[2] / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )

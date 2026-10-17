@@ -1,18 +1,21 @@
+from pydantic import ValidationError
+
+from fable.application.prompts import build_system_prompt
 from fable.application.session import GameSession
 from fable.config import Settings
 from fable.domain.models import Character, GameSetup
-from fable.infrastructure.llm_client import LLMClient
+from fable.infrastructure.master_agent import GameMasterAgent
 
 
-def _create_character() -> Character:
+def _create_character(settings: Settings) -> Character:
     print("=== Создание героя ===")
     print("Можно нажать Enter, чтобы использовать значения по умолчанию.\n")
 
-    name = input("Имя персонажа: ").strip() or "Безымянный герой"
-    role = input("Роль: ").strip() or "странник"
-    goal = input("Цель: ").strip() or "раскрыть тайну"
+    name = input("Имя персонажа: ").strip() or settings.default_character_name
+    role = input("Роль: ").strip() or settings.default_character_role
+    goal = input("Цель: ").strip() or settings.default_character_goal
     description = input("Опиши героя (можно оставить пустым): ").strip()
-    genre = input("Жанр: ").strip() or "фэнтези"
+    genre = input("Жанр: ").strip() or settings.default_genre
 
     return Character(
         name=name,
@@ -23,38 +26,48 @@ def _create_character() -> Character:
     )
 
 
-def _create_game_setup() -> GameSetup:
+def _create_game_setup(settings: Settings) -> GameSetup:
     print("=== Создание игры ===")
-    world = input("Опиши мир: ").strip()
-    if not world:
-        world = "Фэнтезийный мир, в котором древняя магия постепенно возвращается."
+    world = input("Опиши мир: ").strip() or settings.default_world
+    story = input("Опиши завязку истории: ").strip() or settings.default_story
 
-    story = input("Опиши завязку истории: ").strip()
-    if not story:
-        story = "Герой оказывается перед загадкой, которая может изменить его жизнь."
-
-    return GameSetup(world=world, story=story, character=_create_character())
+    return GameSetup(world=world, story=story, character=_create_character(settings))
 
 
 def main() -> None:
     try:
-        settings = Settings.from_environment()
-    except ValueError as error:
-        print(error)
+        settings = Settings()
+    except ValidationError as error:
+        missing = [
+            str(item["loc"][0]).upper() for item in error.errors() if item["type"] == "missing"
+        ]
+        if missing:
+            print("Заполни обязательные настройки в .env: " + ", ".join(missing))
+        else:
+            print(f"Проверь настройки в .env: {error}")
         return
 
+    missing_settings = [
+        name
+        for name, value in {
+            "API_KEY": settings.api_key,
+            "BASE_URL": settings.base_url,
+            "MODEL": settings.model,
+        }.items()
+        if not value
+    ]
+    if missing_settings:
+        print("Заполни обязательные настройки в .env: " + ", ".join(missing_settings))
+        return
+
+    setup = _create_game_setup(settings)
     try:
-        client = LLMClient(
-            base_url=settings.base_url,
-            model=settings.model,
-            api_key=settings.api_key,
-        )
+        agent = GameMasterAgent(settings, build_system_prompt(setup))
     except Exception as error:
         print(f"Не удалось настроить подключение к модели: {error}")
         return
 
-    setup = _create_game_setup()
-    session = GameSession(setup, client)
+    session = GameSession(agent, settings.history_limit)
     print("Квест начался. Пиши 'выход' для выхода.\n")
 
     try:

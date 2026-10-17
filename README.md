@@ -2,6 +2,8 @@
 
 Прототип текстовой RPG: опиши мир, завязку и героя, а языковая модель будет вести историю и отвечать на действия игрока. Ответы выводятся по мере генерации.
 
+Сейчас повествованием управляет один LangChain-агент-мастер. Инструменты, спутники и другие агенты пока не подключены.
+
 ## Требования
 
 - Python 3.12 или новее
@@ -18,12 +20,18 @@ cp example.env .env
 Заполни `.env` параметрами своего LLM-сервера:
 
 ```env
-BASE_URL=http://localhost:8080/v1
-API_KEY=your_api_key
-MODEL=your_model_name
+BASE_URL=
+API_KEY=
+MODEL=
+ENABLE_THINKING=none
+TEMPERATURE=0.7
 ```
 
-`BASE_URL` укажи как адрес API, `MODEL` должен совпадать с именем модели на сервере, а `API_KEY` — с ключом, который ожидает сервер.
+Заполни `API_KEY`, `BASE_URL` и `MODEL` значениями своего LLM-сервера. Эти обязательные поля намеренно не имеют значений по умолчанию; если оставить их пустыми, приложение подскажет, что заполнить.
+
+`ENABLE_THINKING` принимает `none`, `low`, `medium` или `xhigh`. `TEMPERATURE` принимает число от `0` до `2`. По умолчанию thinking выключен, а temperature равна `0.7`.
+
+Остальные настройки, которые можно переопределить: `HISTORY_LIMIT`, `DEFAULT_WORLD`, `DEFAULT_STORY`, `DEFAULT_CHARACTER_NAME`, `DEFAULT_CHARACTER_ROLE`, `DEFAULT_CHARACTER_GOAL` и `DEFAULT_GENRE`.
 
 ## Запуск
 
