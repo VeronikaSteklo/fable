@@ -2,9 +2,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from fable.config import Settings
 from fable.config import Settings, ThinkingLevel
-from fable.config import Settings, ThinkingLevel
+from fable.domain.state import GameState
 from fable.infrastructure.master_agent import GameMasterAgent
 
 
@@ -29,14 +28,14 @@ class GameMasterAgentTests(unittest.TestCase):
         settings = Settings(
             base_url="http://localhost:8080/v1",
             model="test-model",
-            api_key="",
             api_key="test-key",
             enable_thinking=ThinkingLevel.XHIGH,
             temperature=0.25,
         )
         system_prompt = "Ты — мастер игры."
+        game_state = GameState()
 
-        master = GameMasterAgent(settings, system_prompt)
+        master = GameMasterAgent(settings, system_prompt, game_state)
         messages = [{"role": "user", "content": "Начни историю"}]
 
         self.assertEqual(list(master.stream(messages)), ["Сцена ", "готова"])
@@ -50,10 +49,13 @@ class GameMasterAgentTests(unittest.TestCase):
                 "reasoning_effort": "xhigh",
             },
         )
-        create_agent_mock.assert_called_once_with(
-            model=chat_openai_class.return_value,
-            tools=[],
-            system_prompt=system_prompt,
+        create_agent_mock.assert_called_once()
+        agent_config = create_agent_mock.call_args.kwargs
+        self.assertIs(agent_config["model"], chat_openai_class.return_value)
+        self.assertEqual(agent_config["system_prompt"], system_prompt)
+        self.assertEqual(
+            [tool.name for tool in agent_config["tools"]],
+            ["read_game_state", "update_game_state"],
         )
         agent_graph.stream.assert_called_once_with(
             {"messages": messages},

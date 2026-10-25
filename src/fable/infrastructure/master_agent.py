@@ -4,10 +4,19 @@ from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 
 from fable.config import Settings, ThinkingLevel
+from fable.domain.state import GameState
+from fable.infrastructure.chroma_memory import ChromaMemory
+from fable.infrastructure.master_tools import create_master_tools
 
 
 class GameMasterAgent:
-    def __init__(self, settings: Settings, system_prompt: str):
+    def __init__(
+        self,
+        settings: Settings,
+        system_prompt: str,
+        game_state: GameState,
+        memory: ChromaMemory | None = None,
+    ):
         extra_body: dict[str, object] = {
             "chat_template_kwargs": {
                 "enable_thinking": settings.enable_thinking is not ThinkingLevel.NONE
@@ -25,7 +34,7 @@ class GameMasterAgent:
         )
         self._agent = create_agent(
             model=model,
-            tools=[],
+            tools=create_master_tools(game_state, memory),
             system_prompt=system_prompt,
         )
 

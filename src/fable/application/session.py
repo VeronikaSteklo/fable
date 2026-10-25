@@ -1,7 +1,9 @@
 from collections.abc import Iterator
 from typing import Protocol
 
+from fable.application.guardrails import Guardrail
 from fable.application.prompts import build_start_prompt
+from fable.domain.safety import ContentBlockedError
 
 
 class StreamingAgent(Protocol):
@@ -9,8 +11,14 @@ class StreamingAgent(Protocol):
 
 
 class GameSession:
-    def __init__(self, agent: StreamingAgent, history_limit: int):
+    def __init__(
+        self,
+        agent: StreamingAgent,
+        history_limit: int,
+        guardrail: Guardrail | None = None,
+    ):
         self._agent = agent
+        self._guardrail = guardrail
         self._history_limit = history_limit
         self._history: list[dict] = [{"role": "user", "content": build_start_prompt()}]
 
@@ -25,6 +33,11 @@ class GameSession:
         return "".join(self.send_action_stream(action))
 
     def send_action_stream(self, action: str) -> Iterator[str]:
+        if self._guardrail is not None:
+            verdict = self._guardrail.check(action)
+            if not verdict.allowed:
+                raise ContentBlockedError(verdict)
+
         self._history.append({"role": "user", "content": action})
         try:
             reply = yield from self._stream_reply()

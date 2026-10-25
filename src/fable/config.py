@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     default_character_role: str = "странник"
     default_character_goal: str = "раскрыть тайну"
     default_genre: str = "фэнтези"
+    moderation_enabled: bool = True
+    moderation_model: str | None = None
+    embedding_model: str | None = None
+    embedding_base_url: str | None = None
+    memory_store_path: Path = Path(__file__).resolve().parents[2] / ".fable" / "chroma"
+    memory_search_limit: Annotated[int, Field(ge=1, le=10)] = 3
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parents[2] / ".env",
