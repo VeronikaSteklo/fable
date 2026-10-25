@@ -12,6 +12,7 @@ build/
 
 .env
 .env.local
+.fable/
 
 .vscode/
 .idea/
