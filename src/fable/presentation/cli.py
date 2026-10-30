@@ -1,154 +1,129 @@
-from pydantic import ValidationError
+from uuid import uuid4
 
-from fable.application.guardrails import BLOCK_MESSAGE, CompositeGuardrail, RuleGuardrail
-from fable.application.prompts import build_system_prompt
-from fable.application.session import GameSession
+from fable.application.guardrails import BLOCK_MESSAGE
+from fable.application.persistence import build_game_record, parse_game_record
+from fable.bootstrap import (apply_setup_defaults, create_guardrail, create_session,
+                             load_settings, setup_text)
 from fable.config import Settings
 from fable.domain.models import Character, GameSetup
 from fable.domain.safety import ContentBlockedError
 from fable.domain.state import GameState
-from fable.infrastructure.chroma_memory import ChromaMemory
-from fable.infrastructure.llm_moderator import LLMModerator
-from fable.infrastructure.master_agent import GameMasterAgent
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from fable.infrastructure.session_store import JsonSessionStore
 
 
 def _create_character(settings: Settings) -> Character:
     print("=== Создание героя ===")
     print("Можно нажать Enter, чтобы использовать значения по умолчанию.\n")
-
-    name = input("Имя персонажа: ").strip() or settings.default_character_name
-    role = input("Роль: ").strip() or settings.default_character_role
-    goal = input("Цель: ").strip() or settings.default_character_goal
-    description = input("Опиши героя (можно оставить пустым): ").strip()
-    genre = input("Жанр: ").strip() or settings.default_genre
-
     return Character(
-        name=name,
-        role=role,
-        goal=goal,
-        description=description,
-        genre=genre,
+        name=input("Имя персонажа: ").strip(),
+        role=input("Роль: ").strip(),
+        goal=input("Цель: ").strip(),
+        description=input("Опиши героя (можно оставить пустым): ").strip(),
+        genre=input("Жанр: ").strip(),
     )
 
 
 def _create_game_setup(settings: Settings) -> GameSetup:
     print("=== Создание игры ===")
-    world = input("Опиши мир: ").strip() or settings.default_world
-    story = input("Опиши завязку истории: ").strip() or settings.default_story
+    world = input("Опиши мир: ").strip()
+    story = input("Опиши завязку истории: ").strip()
+    return apply_setup_defaults(
+        GameSetup(world=world, story=story, character=_create_character(settings)), settings,
+    )
 
-    return GameSetup(world=world, story=story, character=_create_character(settings))
 
-
-def _create_guardrail(settings: Settings) -> CompositeGuardrail:
-    guardrails: list = [RuleGuardrail()]
-    if settings.moderation_enabled:
-        moderator_model = ChatOpenAI(
-            model=settings.moderation_model or settings.model,
-            base_url=settings.base_url,
-            api_key=settings.api_key,
-            temperature=0,
-        )
-        guardrails.append(LLMModerator(moderator_model))
-    return CompositeGuardrail(guardrails)
+def _choose_saved_game(store: JsonSessionStore) -> str | None:
+    recent = store.list()[:5]
+    if not recent:
+        return None
+    print("=== Сохранённые игры ===")
+    for number, game in enumerate(recent, 1):
+        print(f"{number}. {game['title']} — ходов: {game['turns']} ({game['updated_at']})")
+    while True:
+        answer = input("Продолжить игру (номер; Enter — новая игра): ").strip()
+        if not answer:
+            return None
+        if answer.isdigit() and 1 <= int(answer) <= len(recent):
+            return recent[int(answer) - 1]["id"]
+        print("Выбери номер из списка или нажми Enter.")
 
 
 def main() -> None:
     try:
-        settings = Settings()
-    except ValidationError as error:
-        missing = [
-            str(item["loc"][0]).upper() for item in error.errors() if item["type"] == "missing"
-        ]
-        if missing:
-            print("Заполни обязательные настройки в .env: " + ", ".join(missing))
+        settings = load_settings()
+    except ValueError as error:
+        print(error)
+        return
+
+    try:
+        store = JsonSessionStore(settings.sessions_path)
+        game_id = _choose_saved_game(store)
+        created_at = None
+        if game_id is not None:
+            record = store.load(game_id)
+            if record is None:
+                raise ValueError("Сохранённая игра не найдена")
+            parsed = parse_game_record(record)
+            setup, game_state, created_at = parsed.setup, parsed.state, parsed.created_at
+            session = create_session(settings, setup, game_state, parsed.session)
         else:
-            print(f"Проверь настройки в .env: {error}")
+            guardrail = create_guardrail(settings)
+            while True:
+                setup = apply_setup_defaults(_create_game_setup(settings), settings)
+                if guardrail.check(setup_text(setup)).allowed:
+                    break
+                print(BLOCK_MESSAGE + " Измени описание мира или героя.\n")
+            game_id = uuid4().hex
+            game_state = GameState()
+            session = create_session(settings, setup, game_state)
+            record = build_game_record(game_id, setup, game_state, session)
+            store.save(game_id, record)
+            created_at = record["created_at"]
+    except (EOFError, KeyboardInterrupt):
         return
-
-    missing_settings = [
-        name
-        for name, value in {
-            "API_KEY": settings.api_key,
-            "BASE_URL": settings.base_url,
-            "MODEL": settings.model,
-        }.items()
-        if not value
-    ]
-    if missing_settings:
-        print("Заполни обязательные настройки в .env: " + ", ".join(missing_settings))
-        return
-
-    guardrail = _create_guardrail(settings)
-    while True:
-        setup = _create_game_setup(settings)
-        setup_text = "\n".join(
-            [setup.world, setup.story, setup.character.description, setup.character.goal]
-        )
-        if guardrail.check(setup_text).allowed:
-            break
-        print(BLOCK_MESSAGE + " Измени описание мира или героя.\n")
-
-    game_state = GameState()
-    try:
-        memory = None
-        if settings.embedding_model:
-            embeddings = OpenAIEmbeddings(
-                model=settings.embedding_model,
-                api_key=settings.api_key,
-                base_url=settings.embedding_base_url or settings.base_url,
-            )
-            memory = ChromaMemory(
-                setup=setup,
-                embeddings=embeddings,
-                persist_directory=settings.memory_store_path,
-                search_limit=settings.memory_search_limit,
-            )
-
-        agent = GameMasterAgent(
-            settings,
-            build_system_prompt(setup, vector_memory_enabled=memory is not None),
-            game_state,
-            memory,
-        )
     except Exception as error:
-        print(f"Не удалось настроить подключение к модели: {error}")
+        print(f"Не удалось подготовить игру: {error}")
         return
 
-    session = GameSession(agent, settings.history_limit, guardrail)
+    def save():
+        store.save(game_id, build_game_record(
+            game_id, setup, game_state, session, created_at=created_at,
+        ))
+
     print("Квест начался. Пиши 'выход' для выхода.\n")
-
-    try:
-        print("Мир: ", end="", flush=True)
-        for chunk in session.start_stream():
-            print(chunk, end="", flush=True)
-        print("\n")
-    except Exception as error:
-        print(f"Не удалось подключиться к модели: {error}")
-        return
+    if session.started:
+        last_reply = next(message["content"] for message in reversed(session.to_snapshot()["history"])
+                          if message["role"] == "assistant")
+        print(f"Мир: {last_reply}\n")
+    else:
+        try:
+            print("Мир: ", end="", flush=True)
+            for chunk in session.start_stream():
+                print(chunk, end="", flush=True)
+            save()
+            print("\n")
+        except Exception as error:
+            print(f"Не удалось начать игру: {error}")
+            return
 
     while True:
         try:
             action = input("Ты: ").strip()
         except (EOFError, KeyboardInterrupt):
             break
-
         if action.lower() in {"выход", "quit", "exit"}:
             break
         if not action:
             print("Введи какое-нибудь действие.")
             continue
-
         try:
             print("\nМир: ", end="", flush=True)
             for chunk in session.send_action_stream(action):
                 print(chunk, end="", flush=True)
+            save()
             print("\n")
         except ContentBlockedError:
             print(f"\n{BLOCK_MESSAGE}\n")
-            continue
         except Exception as error:
             print(f"\nОшибка: {error}\n")
-            continue
-
     print("\nКвест завершён.")
