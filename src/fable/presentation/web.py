@@ -254,7 +254,9 @@ def create_app(settings: Settings | None = None, *, session_factory: SessionFact
             raise HTTPException(422, "Введи какое-нибудь действие")
         return stream(game_id, action)
 
-    dist = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+    dist = Path(os.environ.get(
+        "FABLE_FRONTEND_DIST", Path(__file__).resolve().parents[3] / "frontend" / "dist",
+    ))
     if dist.is_dir():
         app.mount("/", StaticFiles(directory=dist, html=True), name="frontend")
     return app

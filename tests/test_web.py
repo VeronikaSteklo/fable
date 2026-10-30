@@ -1,9 +1,11 @@
 import asyncio
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import threading
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -85,6 +87,20 @@ class WebTests(unittest.TestCase):
         response = self.client.post("/api/games", json=EMPTY_SETUP)
         self.assertEqual(response.status_code, 201)
         return response.json()
+
+    def test_frontend_dist_environment_override(self):
+        dist = Path(self.directory.name) / "frontend"
+        dist.mkdir()
+        html = "<!doctype html><html><body>Fable test frontend</body></html>"
+        (dist / "index.html").write_text(html, encoding="utf-8")
+        with patch.dict(os.environ, {"FABLE_FRONTEND_DIST": str(dist)}):
+            with TestClient(create_app(self.config, session_factory=self.factory,
+                                       store=self.store)) as client:
+                response = client.get("/")
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("text/html", response.headers["content-type"])
+                self.assertEqual(response.text, html)
+                self.assertEqual(client.get("/api/games").json(), [])
 
     def test_create_defaults_and_immediate_persistence(self):
         game = self.create()
