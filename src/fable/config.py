@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     default_character_role: str = "странник"
     default_character_goal: str = "раскрыть тайну"
     default_genre: str = "фэнтези"
+    summary_enabled: bool = True
+    summary_max_chars: Annotated[int, Field(ge=1)] = 2000
+    summary_model: str | None = None
+    consistency_check_enabled: bool = True
+    consistency_model: str | None = None
+    sessions_path: Path = Path(__file__).resolve().parents[2] / ".fable" / "sessions"
     moderation_enabled: bool = True
     moderation_model: str | None = None
     embedding_model: str | None = None
