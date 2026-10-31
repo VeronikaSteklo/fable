@@ -22,7 +22,11 @@ class GameState:
         self.inventory = [item for item in self.inventory if item.casefold() not in removals]
         for item in add_inventory or []:
             item = item.strip()
-            if item and item.casefold() not in {entry.casefold() for entry in self.inventory}:
+            if (
+                item
+                and item.casefold() not in removals
+                and item.casefold() not in {entry.casefold() for entry in self.inventory}
+            ):
                 self.inventory.append(item)
 
         existing_facts = {fact.casefold() for fact in self.facts}
@@ -31,6 +35,19 @@ class GameState:
             if fact and fact.casefold() not in existing_facts:
                 self.facts.append(fact)
                 existing_facts.add(fact.casefold())
+
+    def to_dict(self) -> dict:
+        return {
+            "location": self.location,
+            "inventory": list(self.inventory),
+            "facts": list(self.facts),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "GameState":
+        return cls(location=data.get("location"),
+                   inventory=list(data.get("inventory", [])),
+                   facts=list(data.get("facts", [])))
 
     def to_context(self) -> str:
         location = self.location or "неизвестна"
