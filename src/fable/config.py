@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     consistency_check_enabled: bool = True
     consistency_model: str | None = None
     sessions_path: Path = Path(__file__).resolve().parents[2] / ".fable" / "sessions"
+    auth_db_path: Path = Path(__file__).resolve().parents[2] / ".fable" / "fable.db"
+    session_ttl_days: Annotated[int, Field(ge=1)] = 30
+    cookie_secure: bool = False
+    allow_registration: bool = True
     moderation_enabled: bool = True
     moderation_model: str | None = None
     embedding_model: str | None = None
