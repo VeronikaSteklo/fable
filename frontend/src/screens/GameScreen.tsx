@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type Keyboard
 import { getGame, sendAction, startGame } from '../api';
 import type { Game, StoryEntry, StreamHandlers } from '../types';
 
-type Props = { gameId: string; onNewGame: () => void };
+type Props = { gameId: string; onExit: () => void };
 type Retry = { action?: string; baseline: number };
 
 // crypto.randomUUID exists only in secure contexts (https/localhost), not on http://<ip>.
@@ -16,7 +16,7 @@ function storyEntries(game: Game): StoryEntry[] {
   }));
 }
 
-export default function GameScreen({ gameId, onNewGame }: Props) {
+export default function GameScreen({ gameId, onExit }: Props) {
   const [game, setGame] = useState<Game | null>(null);
   const [draft, setDraft] = useState('');
   const [entries, setEntries] = useState<StoryEntry[]>([]);
@@ -26,10 +26,17 @@ export default function GameScreen({ gameId, onNewGame }: Props) {
   const [retry, setRetry] = useState<Retry | null>(null);
   const controller = useRef<AbortController | null>(null);
   const active = useRef(false);
+  const streaming = useRef(false);
+  const exit = () => {
+    if (streaming.current && !window.confirm('Ответ ещё пишется. Выйти в меню?')) return;
+    controller.current?.abort();
+    onExit();
+  };
   const bottom = useRef<HTMLDivElement | null>(null);
 
   const runStream = useCallback(async (current: Game, signal: AbortSignal, action?: string) => {
     if (signal.aborted) return;
+    streaming.current = true;
     active.current = true;
     setBusy(true);
     setError('');
@@ -75,6 +82,7 @@ export default function GameScreen({ gameId, onNewGame }: Props) {
       if (action) await sendAction(gameId, action, handlers, signal);
       else await startGame(gameId, handlers, signal);
     } finally {
+      streaming.current = false;
       if (!signal.aborted) { active.current = false; setBusy(false); }
     }
   }, [gameId]);
@@ -138,9 +146,9 @@ export default function GameScreen({ gameId, onNewGame }: Props) {
   return (
     <main className="game-page">
       <header className="game-header">
-        <span className="brand"><span className="brand-mark" aria-hidden="true">✳</span>Fable</span>
+        <button className="brand brand-button" type="button" onClick={exit} aria-label="Fable — в меню"><span className="brand-mark" aria-hidden="true">✳</span>Fable</button>
         <span className="game-title">{game?.setup.character.name || 'Новая история'}</span>
-        <button className="text-button" type="button" onClick={onNewGame}>Новая игра</button>
+        <button className="text-button" type="button" onClick={exit}>В меню</button>
       </header>
       <section className="story-log" aria-label="История" aria-live="polite">
         {entries.map((entry) => <article className={`story-entry ${entry.kind}${entry.rejected ? ' rejected' : ''}`} key={entry.id}>
