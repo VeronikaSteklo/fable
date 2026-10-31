@@ -1,3 +1,8 @@
+export interface User {
+  id: string;
+  username: string;
+}
+
 export interface Character {
   name: string;
   role: string;

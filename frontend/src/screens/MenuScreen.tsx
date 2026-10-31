@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { deleteGame, listGames } from '../api';
 import { lastGameId, rememberGame } from '../savedGame.ts';
-import type { GameListItem } from '../types';
+import type { GameListItem, User } from '../types';
 
-type Props = { onStart: (id: string) => void; onNewGame: () => void };
+type Props = { user: User; onLogout: () => Promise<void>; loggingOut: boolean; onStart: (id: string) => void; onNewGame: () => void };
 const plural = new Intl.PluralRules('ru-RU');
 function turnsLabel(turns: number) {
   const form = plural.select(turns);
@@ -14,9 +14,9 @@ function updatedLabel(value: string) {
   return Number.isNaN(date.getTime()) ? 'Дата неизвестна' : date.toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
 }
 
-export default function MenuScreen({ onStart, onNewGame }: Props) {
+export default function MenuScreen({ user, onLogout, loggingOut, onStart, onNewGame }: Props) {
   const [games, setGames] = useState<GameListItem[]>([]);
-  const [lastId, setLastId] = useState(lastGameId);
+  const [lastId, setLastId] = useState(() => lastGameId(user.id));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [deleteError, setDeleteError] = useState('');
@@ -26,9 +26,9 @@ export default function MenuScreen({ onStart, onNewGame }: Props) {
 
   const acceptGames = (saved: GameListItem[]) => {
     setGames(saved);
-    const remembered = lastGameId();
+    const remembered = lastGameId(user.id);
     if (remembered && !saved.some((game) => game.id === remembered)) {
-      rememberGame(null);
+      rememberGame(user.id, null);
       setLastId(null);
     } else setLastId(remembered);
   };
@@ -42,7 +42,7 @@ export default function MenuScreen({ onStart, onNewGame }: Props) {
       if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'Сохранённые истории недоступны. Проверь подключение к серверу.');
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [revision]);
+  }, [revision, user.id]);
   useEffect(() => () => deletion.current?.abort(), []);
 
   const remove = async (game: GameListItem) => {
@@ -70,6 +70,7 @@ export default function MenuScreen({ onStart, onNewGame }: Props) {
     <main className="setup-page">
       <header className="brand"><span className="brand-mark" aria-hidden="true">✳</span><span>Fable</span></header>
       <section className="setup-content menu-content" aria-labelledby="menu-title">
+        <div className="account-bar"><span className="muted">Вы вошли как <strong>{user.username}</strong></span><button className="text-button" type="button" onClick={() => void onLogout()} disabled={loggingOut}>{loggingOut ? 'Выходим…' : 'Выйти'}</button></div>
         <p className="eyebrow">ТВОЯ ИСТОРИЯ ПРОДОЛЖАЕТСЯ</p>
         <h1 id="menu-title">Куда приведёт история?</h1>
         <p className="intro">Создай новый мир или вернись туда, где остановился.</p>
