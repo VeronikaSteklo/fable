@@ -5,6 +5,10 @@ import type { Game, StoryEntry, StreamHandlers } from '../types';
 type Props = { gameId: string; onNewGame: () => void };
 type Retry = { action?: string; baseline: number };
 
+// crypto.randomUUID exists only in secure contexts (https/localhost), not on http://<ip>.
+let entrySeq = 0;
+const newEntryId = () => `entry-${Date.now().toString(36)}-${(entrySeq++).toString(36)}`;
+
 function storyEntries(game: Game): StoryEntry[] {
   return game.entries.map((entry, index) => ({
     id: `saved-${index}`, kind: entry.role === 'user' ? 'player' : 'master',
@@ -31,8 +35,8 @@ export default function GameScreen({ gameId, onNewGame }: Props) {
     setError('');
     setNotice('');
     setRetry(null);
-    const playerId = crypto.randomUUID();
-    const masterId = crypto.randomUUID();
+    const playerId = newEntryId();
+    const masterId = newEntryId();
     let text = '';
     setEntries((saved) => [...saved,
       ...(action ? [{ id: playerId, kind: 'player' as const, text: action }] : []),
