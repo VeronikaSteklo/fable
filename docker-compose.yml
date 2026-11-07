@@ -9,6 +9,7 @@ services:
     environment:
       MEMORY_STORE_PATH: /data/chroma
       SESSIONS_PATH: /data/sessions
+      AUTH_DB_PATH: /data/fable.db
     volumes:
       - fable-data:/data
     restart: unless-stopped

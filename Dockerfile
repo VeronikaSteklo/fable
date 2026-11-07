@@ -28,7 +28,8 @@ ENV PATH="/opt/venv/bin:$PATH" \
     FABLE_PORT=8000 \
     FABLE_FRONTEND_DIST=/app/frontend/dist \
     MEMORY_STORE_PATH=/data/chroma \
-    SESSIONS_PATH=/data/sessions
+    SESSIONS_PATH=/data/sessions \
+    AUTH_DB_PATH=/data/fable.db
 RUN groupadd --gid 10001 fable \
     && useradd --uid 10001 --gid fable --create-home fable \
     && mkdir -p /data/chroma /data/sessions \
@@ -39,5 +40,5 @@ COPY --from=frontend-build /build/frontend/dist /app/frontend/dist
 USER fable
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=3 \
-    CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('FABLE_PORT', '8000') + '/api/games', timeout=4).close()"]
+    CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('FABLE_PORT', '8000') + '/openapi.json', timeout=4).close()"]
 CMD ["fable-server"]

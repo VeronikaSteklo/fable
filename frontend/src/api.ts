@@ -1,23 +1,31 @@
-import type { Game, GameListItem, GameSetup, StreamHandlers, StreamResult } from './types.ts';
+import type { Game, GameListItem, GameSetup, StreamHandlers, StreamResult, User } from './types.ts';
 
 export class ApiError extends Error {
   readonly status: number;
+  readonly detail: string;
   constructor(message: string, status: number) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.detail = message;
   }
 }
 
-async function request(path: string, init: RequestInit = {}): Promise<Response> {
+let unauthorizedHandler: (() => void) | null = null;
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  unauthorizedHandler = handler;
+}
+
+async function request(path: string, init: RequestInit = {}, base = '/api/games'): Promise<Response> {
   let response: Response;
   try {
-    response = await fetch(`/api/games${path}`, init);
+    response = await fetch(`${base}${path}`, { ...init, credentials: 'same-origin' });
   } catch (error) {
     if (init.signal?.aborted) throw error;
     throw new Error('Не удалось связаться с сервером. Проверь подключение и попробуй ещё раз.');
   }
   if (!response.ok) {
+    if (response.status === 401 && !init.signal?.aborted) unauthorizedHandler?.();
     const body = await response.json().catch(() => null);
     throw new ApiError(typeof body?.detail === 'string' ? body.detail : `Ошибка сервера (${response.status}). Попробуй ещё раз.`, response.status);
   }
@@ -27,6 +35,20 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
 const jsonBody = (body: unknown, signal?: AbortSignal): RequestInit => ({
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
 });
+type Credentials = { username: string; password: string };
+export async function register(credentials: Credentials, signal?: AbortSignal): Promise<User> {
+  return (await (await request('/register', jsonBody(credentials, signal), '/api/auth')).json()).user;
+}
+export async function login(credentials: Credentials, signal?: AbortSignal): Promise<User> {
+  return (await (await request('/login', jsonBody(credentials, signal), '/api/auth')).json()).user;
+}
+export async function logout(signal?: AbortSignal): Promise<void> {
+  await request('/logout', { method: 'POST', signal }, '/api/auth');
+}
+export async function me(signal?: AbortSignal): Promise<User> {
+  return (await (await request('/me', { signal }, '/api/auth')).json()).user;
+}
+
 export async function createGame(setup: GameSetup, signal?: AbortSignal): Promise<Game> {
   return (await request('', jsonBody(setup, signal))).json();
 }

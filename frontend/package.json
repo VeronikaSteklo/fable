@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test": "node --experimental-strip-types scripts/check-sse.mjs && node --experimental-strip-types scripts/check-api.mjs && node --experimental-strip-types scripts/check-menu.mjs",
+    "test": "node --experimental-strip-types scripts/check-sse.mjs && node --experimental-strip-types scripts/check-api.mjs && node --experimental-strip-types scripts/check-menu.mjs && node --experimental-strip-types scripts/check-auth.mjs && node --experimental-strip-types scripts/check-auth-ui.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

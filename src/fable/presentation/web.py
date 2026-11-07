@@ -10,7 +10,7 @@ from uuid import uuid4
 from typing import cast
 
 import anyio
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +18,7 @@ from pydantic import BaseModel, StrictStr
 from starlette.concurrency import run_in_threadpool
 import uvicorn
 
+from fable.application.auth import AuthService, AuthStore
 from fable.application.guardrails import BLOCK_MESSAGE
 from fable.application.persistence import build_game_record, parse_game_record
 from fable.application.session import GameSession
@@ -27,7 +28,10 @@ from fable.config import Settings
 from fable.domain.models import GameSetup
 from fable.domain.safety import ContentBlockedError
 from fable.domain.state import GameState
+from fable.domain.user import User
+from fable.infrastructure.auth_store import SqliteAuthStore
 from fable.infrastructure.session_store import JsonSessionStore
+from fable.presentation.auth import DEV_ORIGINS, OriginCheckMiddleware, configure_auth
 
 logger = logging.getLogger(__name__)
 SessionFactory = Callable[[Settings, GameSetup, GameState, dict | None], GameSession]
@@ -102,24 +106,33 @@ class GameStreamResponse(StreamingResponse):
 
 
 def create_app(settings: Settings | None = None, *, session_factory: SessionFactory | None = None,
-               store: JsonSessionStore | None = None) -> FastAPI:
+               store: JsonSessionStore | None = None,
+               auth_store: AuthStore | None = None,
+               store_factory: Callable[[str], JsonSessionStore] | None = None) -> FastAPI:
     config = settings if settings is not None else load_settings()
     validate_settings(config)
     factory = session_factory if session_factory is not None else create_session
-    sessions = store if store is not None else JsonSessionStore(config.sessions_path)
+    root_store = store if store is not None else JsonSessionStore(config.sessions_path)
+    user_store = store_factory if store_factory is not None else root_store.for_user
     guardrail = create_guardrail(config)
-    loaded: dict[str, LoadedGame] = {}
+    loaded: dict[tuple[str, str], LoadedGame] = {}
     cache_lock = threading.Lock()
     app = FastAPI(title="Fable")
-    app.add_middleware(CORSMiddleware,
-                       allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    auth = AuthService(auth_store if auth_store is not None else SqliteAuthStore(config.auth_db_path),
+                       session_ttl_days=config.session_ttl_days,
+                       allow_registration=config.allow_registration)
+    current_user = configure_auth(app, config, auth)
+    app.add_middleware(OriginCheckMiddleware)
+    app.add_middleware(CORSMiddleware, allow_origins=DEV_ORIGINS, allow_credentials=True,
                        allow_methods=["GET", "POST", "DELETE"], allow_headers=["*"])
 
-    def load(game_id: str) -> LoadedGame:
+    def load(user: User, game_id: str) -> LoadedGame:
+        key = (user.id, game_id)
+        sessions = user_store(user.id)
         # Serialize restoration, otherwise two simultaneous first requests could
         # create separate sessions (and separate locks) for the same saved game.
         with cache_lock:
-            if game_id not in loaded:
+            if key not in loaded:
                 try:
                     record = sessions.load(game_id)
                 except ValueError:
@@ -127,22 +140,23 @@ def create_app(settings: Settings | None = None, *, session_factory: SessionFact
                 if record is None:
                     raise HTTPException(404, "Игра не найдена")
                 parsed = parse_game_record(record)
-                loaded[game_id] = LoadedGame(
+                loaded[key] = LoadedGame(
                     parsed.setup, parsed.state,
                     factory(config, parsed.setup, parsed.state, parsed.session), parsed.created_at,
                 )
-            return loaded[game_id]
+            return loaded[key]
 
-    def acquire(game_id: str, game: LoadedGame) -> None:
+    def acquire(user: User, game_id: str, game: LoadedGame) -> None:
         with cache_lock:
             # A delete may have finished between load() and this operation.
-            if loaded.get(game_id) is not game:
+            if loaded.get((user.id, game_id)) is not game:
                 raise HTTPException(404, "Игра не найдена")
             if not game.lock.acquire(blocking=False):
                 raise HTTPException(409, "Ответ для этой игры уже генерируется")
 
     @app.post("/api/games", status_code=201)
-    def create_game(body: SetupBody):
+    def create_game(body: SetupBody, user: User = Depends(current_user)):
+        sessions = user_store(user.id)
         setup = apply_setup_defaults(GameSetup.from_dict(body.model_dump()), config)
         if not guardrail.check(setup_text(setup)).allowed:
             raise HTTPException(422, BLOCK_MESSAGE + " Измени описание мира или героя.")
@@ -152,33 +166,37 @@ def create_app(settings: Settings | None = None, *, session_factory: SessionFact
         record = build_game_record(game_id, setup, state, session)
         sessions.save(game_id, record)
         with cache_lock:
-            loaded[game_id] = LoadedGame(setup, state, session, record["created_at"])
-        return _game(game_id, loaded[game_id])
+            game = LoadedGame(setup, state, session, record["created_at"])
+            loaded[(user.id, game_id)] = game
+        return _game(game_id, game)
 
     @app.get("/api/games")
-    def list_games():
+    def list_games(user: User = Depends(current_user)):
+        sessions = user_store(user.id)
         return [{key: item[key] for key in ("id", "title", "updated_at", "turns")}
                 for item in sessions.list()]
 
     @app.get("/api/games/{game_id}")
-    def get_game(game_id: str):
-        return _game(game_id, load(game_id))
+    def get_game(game_id: str, user: User = Depends(current_user)):
+        return _game(game_id, load(user, game_id))
 
     @app.delete("/api/games/{game_id}", status_code=204)
-    def delete_game(game_id: str):
-        game = load(game_id)
-        acquire(game_id, game)
+    def delete_game(game_id: str, user: User = Depends(current_user)):
+        sessions = user_store(user.id)
+        game = load(user, game_id)
+        acquire(user, game_id, game)
         try:
             with cache_lock:
                 sessions.delete(game_id)
-                loaded.pop(game_id, None)
+                loaded.pop((user.id, game_id), None)
         finally:
             game.lock.release()
         return Response(status_code=204)
 
-    def stream(game_id: str, action: str | None = None) -> StreamingResponse:
-        game = load(game_id)
-        acquire(game_id, game)
+    def stream(user: User, game_id: str, action: str | None = None) -> StreamingResponse:
+        sessions = user_store(user.id)
+        game = load(user, game_id)
+        acquire(user, game_id, game)
         release_lock = threading.Lock()
         released = False
 
@@ -244,15 +262,17 @@ def create_app(settings: Settings | None = None, *, session_factory: SessionFact
         return GameStreamResponse(generate(), release)
 
     @app.post("/api/games/{game_id}/start")
-    def start_game(game_id: str):
-        return stream(game_id)
+    def start_game(game_id: str, user: User = Depends(current_user)):
+        return stream(user, game_id)
 
     @app.post("/api/games/{game_id}/actions")
-    def send_action(game_id: str, body: ActionBody):
+    def send_action(game_id: str, body: ActionBody, user: User = Depends(current_user)):
+        # Ownership takes precedence over action validation for hidden games.
+        load(user, game_id)
         action = body.action.strip()
         if not action:
             raise HTTPException(422, "Введи какое-нибудь действие")
-        return stream(game_id, action)
+        return stream(user, game_id, action)
 
     dist = Path(os.environ.get(
         "FABLE_FRONTEND_DIST", Path(__file__).resolve().parents[3] / "frontend" / "dist",

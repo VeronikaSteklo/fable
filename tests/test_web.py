@@ -76,12 +76,23 @@ class WebTests(unittest.TestCase):
     def setUp(self):
         self.directory = TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
-        self.store = JsonSessionStore(Path(self.directory.name))
+        self.root_store = JsonSessionStore(Path(self.directory.name) / "games")
         self.factory = FakeFactory()
-        self.config = settings()
-        self.app = create_app(self.config, session_factory=self.factory, store=self.store)
+        self.config = settings(auth_db_path=Path(self.directory.name) / "auth.db")
+        self.app = create_app(self.config, session_factory=self.factory, store=self.root_store)
         self.client = TestClient(self.app)
         self.addCleanup(self.client.close)
+        response = self.client.post("/api/auth/register", json={
+            "username": "Tester", "password": "password123",
+        })
+        self.assertEqual(response.status_code, 201)
+        self.store = self.root_store.for_user(response.json()["user"]["id"])
+
+    def authenticate(self, client):
+        response = client.post("/api/auth/login", json={
+            "username": "Tester", "password": "password123",
+        })
+        self.assertEqual(response.status_code, 200)
 
     def create(self):
         response = self.client.post("/api/games", json=EMPTY_SETUP)
@@ -95,7 +106,8 @@ class WebTests(unittest.TestCase):
         (dist / "index.html").write_text(html, encoding="utf-8")
         with patch.dict(os.environ, {"FABLE_FRONTEND_DIST": str(dist)}):
             with TestClient(create_app(self.config, session_factory=self.factory,
-                                       store=self.store)) as client:
+                                       store=self.root_store)) as client:
+                self.authenticate(client)
                 response = client.get("/")
                 self.assertEqual(response.status_code, 200)
                 self.assertIn("text/html", response.headers["content-type"])
@@ -156,7 +168,8 @@ class WebTests(unittest.TestCase):
         original = self.client.get(path).json()
         self.assertEqual(original["summary"], "События сохранены")
         self.assertEqual(len(original["entries"]), 7)
-        with TestClient(create_app(self.config, session_factory=self.factory, store=self.store)) as other:
+        with TestClient(create_app(self.config, session_factory=self.factory, store=self.root_store)) as other:
+            self.authenticate(other)
             self.assertEqual(other.get(path).json(), original)
             self.assertEqual(events(other.post(path + "/actions", json={"action": "Ещё"}))[-1][0], "done")
         self.assertEqual(self.store.load(game["id"])["created_at"], created)
@@ -207,7 +220,8 @@ class WebTests(unittest.TestCase):
                     yield "Сцена"
             return GameSession(Agent(), 4)
 
-        with TestClient(create_app(self.config, session_factory=factory, store=self.store)) as client:
+        with TestClient(create_app(self.config, session_factory=factory, store=self.root_store)) as client:
+            self.authenticate(client)
             game = client.post("/api/games", json=EMPTY_SETUP).json()
             done = events(client.post(f'/api/games/{game["id"]}/start'))[-1]
             self.assertIsNone(done[1]["consistency"])
@@ -250,7 +264,9 @@ class WebTests(unittest.TestCase):
                     scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
                              "http_version": "1.1", "method": "POST", "scheme": "http",
                              "path": path + "/start", "raw_path": (path + "/start").encode(),
-                             "query_string": b"", "headers": [], "server": ("test", 80),
+                             "query_string": b"", "headers": [(b"cookie",
+                                 f"fable_session={self.client.cookies.get('fable_session')}".encode())],
+                             "server": ("test", 80),
                              "client": ("test", 123)}
                     with self.assertRaises(ClientDisconnect):
                         await self.app(scope, receive, send)
@@ -271,4 +287,4 @@ class WebTests(unittest.TestCase):
         response = self.client.options("/api/games", headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST"})
         self.assertEqual(response.headers["access-control-allow-origin"], "http://localhost:5173")
         with self.assertRaisesRegex(ValueError, "API_KEY"):
-            create_app(self.config.model_copy(update={"api_key": ""}), store=self.store)
+            create_app(self.config.model_copy(update={"api_key": ""}), store=self.root_store)

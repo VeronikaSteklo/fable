@@ -1,0 +1,82 @@
+import assert from 'node:assert/strict';
+import { api, load, mount, nodes, text, button, settle } from './auth-harness.mjs';
+
+const store = new Map([['fable:last-game-id', 'legacy']]);
+globalThis.localStorage = { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, value), removeItem: (key) => store.delete(key) };
+const user = { id: 'u1', username: 'reader' };
+const { default: Auth } = load('screens/AuthScreen.tsx');
+const field = (h, id) => nodes(h.tree, (node) => node.props.id === id)[0];
+const change = (h, id, value) => { field(h, id).props.onChange({ target: { value } }); h.render(); };
+const submit = async (h) => { await nodes(h.tree, (node) => node.type === 'form')[0].props.onSubmit({ preventDefault() {} }); await settle(h); };
+let authenticated; let calls = 0;
+api.login = async () => { calls++; return user; };
+api.register = async () => { calls++; return user; };
+let auth = mount(Auth, { onAuthenticated(value) { authenticated = value; } });
+assert.equal(field(auth, 'username').props.autoComplete, 'username');
+assert.equal(field(auth, 'password').props.autoComplete, 'current-password');
+for (const username of ['', 'ab', 'a'.repeat(33), 'имя', 'has space']) {
+  change(auth, 'username', username); change(auth, 'password', 'password123'); await submit(auth);
+  assert.match(text(auth.tree), /3.*32/);
+}
+change(auth, 'username', 'reader');
+for (const password of ['', 'short', 'a'.repeat(129)]) {
+  change(auth, 'password', password); await submit(auth); assert.match(text(auth.tree), /8.*128/);
+}
+assert.equal(calls, 0, 'Invalid fields must not reach the server');
+button(auth, 'Регистрация').props.onClick(); auth.render();
+assert.equal(field(auth, 'password').props.autoComplete, 'new-password');
+assert.equal(field(auth, 'password-confirm').props.autoComplete, 'new-password');
+change(auth, 'password', 'password123'); change(auth, 'password-confirm', 'different'); await submit(auth);
+assert.match(text(auth.tree), /Пароли не совпадают/); assert.equal(calls, 0);
+change(auth, 'password-confirm', 'password123'); await submit(auth);
+assert.deepEqual(authenticated, user); assert.equal(calls, 1); auth.unmount();
+auth = mount(Auth, { onAuthenticated(value) { authenticated = value; } });
+change(auth, 'username', 'reader'); change(auth, 'password', 'password123');
+let loginPayload;
+api.login = async (payload) => { loginPayload = payload; return user; };
+await submit(auth); assert.deepEqual(authenticated, user);
+assert.deepEqual(loginPayload, { username: 'reader', password: 'password123' });
+api.login = async () => { throw new Error('Неверный пароль'); };
+await submit(auth); assert.match(text(auth.tree), /Неверный пароль/);
+let signal; let complete;
+api.login = (_, value) => { signal = value; return new Promise((resolve) => { complete = resolve; }); };
+const pending = nodes(auth.tree, (node) => node.type === 'form')[0].props.onSubmit({ preventDefault() {} }); auth.render();
+assert.equal(button(auth, 'Входим…').props.disabled, true);
+authenticated = null; auth.unmount(); assert.equal(signal.aborted, true);
+complete(user); await pending; assert.equal(authenticated, null, 'Unmounted auth must not navigate');
+console.log('Auth UI checks passed: Russian validation, password confirmation, autocomplete, registration, server errors, loading, unmount cancellation');
+
+class ApiError extends Error { constructor(message, status) { super(message); this.status = status; } }
+api.ApiError = ApiError;
+let unauthorized;
+api.setUnauthorizedHandler = (fn) => { unauthorized = fn; };
+api.me = async () => { unauthorized?.(); throw new ApiError('Нужно войти', 401); };
+api.logout = async () => {};
+const { default: App } = load('App.tsx');
+let app = mount(App);
+assert.match(text(app.tree), /Проверяем/);
+await settle(app); assert.equal(app.tree.type.name, 'AuthScreen');
+app.tree.props.onAuthenticated(user); app.render();
+assert.equal(app.tree.type.name, 'MenuScreen'); assert.deepEqual(app.tree.props.user, user);
+app.tree.props.onStart('game-1'); app.render();
+assert.equal(store.get('fable:last-game-id:u1'), 'game-1');
+assert.equal(store.has('fable:last-game-id'), false, 'Legacy unscoped key must be dropped');
+unauthorized(); app.render(); assert.equal(app.tree.type.name, 'AuthScreen');
+assert.equal(app.tree.props.hint, 'Сессия истекла, войди снова');
+app.tree.props.onAuthenticated(user); app.render();
+await app.tree.props.onLogout(); app.render(); assert.equal(app.tree.type.name, 'AuthScreen');
+app.tree.props.onAuthenticated(user); app.render();
+api.logout = async () => { throw new Error('Offline'); };
+await app.tree.props.onLogout(); app.render(); assert.equal(app.tree.type.name, 'AuthScreen', 'Logout must clear local auth even on failure');
+app.unmount(); assert.equal(unauthorized, null);
+api.me = async () => { throw new Error('Сервер недоступен'); };
+app = mount(App); await settle(app); assert.match(text(app.tree), /Сервер недоступен/);
+api.me = async () => user;
+button(app, 'Повторить').props.onClick(); await settle(app); assert.equal(app.tree.type.name, 'MenuScreen'); app.unmount();
+let meSignal; let resolveMe;
+api.me = (value) => { meSignal = value; return new Promise((resolve) => { resolveMe = resolve; }); };
+app = mount(App); app.unmount(); assert.equal(meSignal.aborted, true); resolveMe(user);
+const saved = load('savedGame.ts');
+saved.rememberGame('u2', 'other'); assert.equal(saved.lastGameId('u1'), 'game-1'); assert.equal(saved.lastGameId('u2'), 'other');
+saved.rememberGame('u2', null); assert.equal(saved.lastGameId('u2'), null);
+console.log('Auth app checks passed: me 401 → auth, login → menu, session expiry, logout success/failure → auth, startup retry/cancellation, per-user storage');

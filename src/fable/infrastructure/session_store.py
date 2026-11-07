@@ -14,6 +14,15 @@ class JsonSessionStore:
         self._directory = Path(directory)
         self._directory.mkdir(parents=True, exist_ok=True)
 
+    def for_user(self, user_id: str) -> "JsonSessionStore":
+        """Return an isolated namespace without exposing legacy root saves."""
+        if not isinstance(user_id, str) or not _SAFE_ID.fullmatch(user_id):
+            raise ValueError("Некорректный идентификатор пользователя")
+        directory = self._directory / user_id
+        if directory.is_symlink():
+            raise ValueError("Каталог пользователя не может быть символической ссылкой")
+        return JsonSessionStore(directory)
+
     def _path(self, game_id: str) -> Path:
         if not isinstance(game_id, str) or not _SAFE_ID.fullmatch(game_id):
             raise ValueError("Некорректный идентификатор игры")
