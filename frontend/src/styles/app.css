@@ -1,3 +1,23 @@
+.companion-hint { margin: 0; }
+.companion-card { min-width: 0; display: grid; gap: .8rem; padding: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius); background: var(--color-surface); overflow-wrap: anywhere; }
+.companion-heading { display: flex; align-items: center; justify-content: space-between; gap: .7rem; }
+.companion-heading h2, .companion-heading h3 { min-width: 0; margin: 0; font-family: var(--font-story); font-size: 1.05rem; font-weight: 400; }
+.companion-heading .text-button { flex-shrink: 0; }
+.companion-error { margin: .4rem 0 0; font-size: .78rem; }
+.companion-add { justify-self: start; padding-left: 0; }
+.companions-panel { display: grid; gap: .75rem; }
+.companions-panel > h2 { margin-bottom: 0; }
+.companion-card .companion-role, .companion-card .companion-attitude { margin: 0; }
+.companion-card .companion-role { margin-top: -.5rem; }
+.companion-absent { flex-shrink: 0; border-radius: var(--radius); padding: .1rem .45rem; background: var(--color-player); color: var(--color-muted); font-size: .72rem; }
+.attitude-meter { position: relative; height: .4rem; border-radius: var(--radius); background: var(--color-player); }
+.attitude-meter::after { content: ''; position: absolute; left: 50%; top: -.15rem; bottom: -.15rem; width: 1px; background: var(--color-muted); }
+.attitude-fill { position: absolute; height: 100%; border-radius: var(--radius); transition: width .2s ease, left .2s ease; }
+.attitude-fill.positive { background: var(--color-accent); }
+.attitude-fill.negative { background: var(--color-muted); }
+.companion-notes { font-size: .82rem; }
+.companion-notes ul { margin-bottom: 0; padding-left: 1.2rem; }
+@media (prefers-reduced-motion: reduce) { .attitude-fill { transition: none; } }
 .setup-page { min-height: 100vh; padding: var(--space-3) var(--space-2) var(--space-2); display: flex; flex-direction: column; align-items: center; }
 .brand { display: inline-flex; align-items: center; gap: .55rem; color: var(--color-text); font-family: var(--font-story); font-size: 1.35rem; font-weight: 600; text-decoration: none; }
 .brand-mark { color: var(--color-accent); font-family: var(--font-ui); font-size: 1.15rem; }

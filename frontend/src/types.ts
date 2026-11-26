@@ -11,10 +11,26 @@ export interface Character {
   genre: string;
 }
 
+export interface Companion {
+  name: string;
+  role: string;
+  personality: string;
+}
+
+export interface CompanionState {
+  name: string;
+  role: string;
+  attitude: number;
+  attitude_label: string;
+  present: boolean;
+  notes: string[];
+}
+
 export interface GameSetup {
   world: string;
   story: string;
   character: Character;
+  companions: Companion[];
 }
 
 export interface Consistency {
@@ -26,6 +42,7 @@ export interface GameState {
   location: string;
   inventory: string[];
   facts: string[];
+  companions: CompanionState[];
 }
 
 export interface GameEntry {
