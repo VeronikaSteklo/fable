@@ -14,6 +14,7 @@ class Game:
     state: GameState
     created_at: str
     updated_at: str
+    version: int = 0
 
     @classmethod
     def create(cls, id: str, owner_id: str | None, setup: GameSetup, now: str) -> "Game":

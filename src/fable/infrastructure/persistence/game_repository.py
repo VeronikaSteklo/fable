@@ -7,6 +7,17 @@ from fable.domain.game.game import Game
 from fable.infrastructure.persistence.session_store import JsonSessionStore
 
 
+def stored_game_record(stored: StoredGame) -> dict:
+    """Shared JSON/JSONB envelope; session is already a snapshot."""
+    game = stored.game
+    return {
+        "id": game.id, "owner_id": game.owner_id,
+        "created_at": game.created_at, "updated_at": game.updated_at,
+        "setup": game.setup.to_dict(), "state": game.state.to_dict(),
+        "session": deepcopy(stored.session),
+    }
+
+
 class JsonGameRepository:
     def __init__(self, store: JsonSessionStore) -> None:
         self.store = store
@@ -23,13 +34,7 @@ class JsonGameRepository:
         self.save(stored)
 
     def save(self, stored: StoredGame) -> None:
-        game = stored.game
-        self.store.save(game.id, {
-            "id": game.id, "owner_id": game.owner_id,
-            "created_at": game.created_at, "updated_at": game.updated_at,
-            "setup": game.setup.to_dict(), "state": game.state.to_dict(),
-            "session": deepcopy(stored.session),
-        })
+        self.store.save(stored.game.id, stored_game_record(stored))
 
     def delete(self, game_id: str) -> None:
         self.store.delete(game_id)

@@ -1,4 +1,4 @@
-"""Framework-neutral campaign use cases and single-process concurrency boundary."""
+"""Framework-neutral campaign use cases with injectable concurrency coordination."""
 from collections.abc import Callable, Generator, Iterator
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -8,7 +8,8 @@ import threading
 from uuid import uuid4
 
 from fable.application.safety.guardrails import BLOCK_MESSAGE
-from fable.application.ports import GameRepository, Guardrail, StoredGame
+from fable.application.ports import GameRepository, Guardrail, StoredGame, LockManager, PersistenceConflict
+from fable.infrastructure.coordination import InMemoryLockManager
 from fable.application.game.session import GameSession
 from fable.domain.companions.companion import InvalidSetupError
 from fable.domain.safety.consistency import ConsistencyVerdict
@@ -96,6 +97,7 @@ class TurnBlocked:
 @dataclass(frozen=True)
 class TurnFailed:
     message: str = "Не удалось продолжить историю. Попробуй ещё раз."
+    status_code: int = 500
 
 
 StreamItem = Chunk | TurnCompleted | TurnBlocked | TurnFailed
@@ -136,7 +138,13 @@ class GameService:
                  guardrail: Guardrail,
                  normalize_setup: Callable[[GameSetup], GameSetup] = lambda setup: setup,
                  clock: Callable[[], str] | None = None,
-                 id_factory: Callable[[], str] | None = None) -> None:
+                 id_factory: Callable[[], str] | None = None,
+                 lock_manager: LockManager | None = None,
+                 turn_lock_ttl_seconds: float = 600,
+                 reload_on_read: bool = False) -> None:
+        self._locks = lock_manager or InMemoryLockManager()
+        self._lock_ttl = turn_lock_ttl_seconds
+        self._reload_on_read = reload_on_read
         self._repository = repository_factory
         self._session = session_factory
         self._guardrail = guardrail
@@ -159,14 +167,17 @@ class GameService:
         game = Game.create(self._id(), owner, setup, self._clock())
         loaded = LoadedGame(game, self._session(setup, game.state, None))
         self._repository(owner).add(StoredGame(game, loaded.session.to_snapshot()))
-        with self._cache_lock:
-            self._loaded[(owner, game.id)] = loaded
+        if not self._reload_on_read:
+            with self._cache_lock:
+                self._loaded[(owner, game.id)] = loaded
         return loaded
 
     def list_games(self, owner: str | None) -> list[dict]:
         return self._repository(owner).list_summaries()
 
     def get_game(self, owner: str | None, game_id: str) -> LoadedGame:
+        if self._reload_on_read:
+            return self._read_game(owner, game_id)
         key = (owner, game_id)
         # Serialize restoration so first concurrent requests share one lock.
         with self._cache_lock:
@@ -181,22 +192,46 @@ class GameService:
                 self._loaded[key] = LoadedGame(game, self._session(game.setup, game.state, stored.session))
             return self._loaded[key]
 
-    def _acquire(self, owner: str | None, game_id: str, loaded: LoadedGame) -> None:
-        with self._cache_lock:
-            if self._loaded.get((owner, game_id)) is not loaded:
-                raise GameNotFound()
-            if not loaded.lock.acquire(blocking=False):
-                raise GameBusy()
+    def _read_game(self, owner: str | None, game_id: str) -> LoadedGame:
+        try:
+            stored = self._repository(owner).get(game_id)
+        except ValueError:
+            raise GameNotFound() from None
+        if stored is None or stored.game.owner_id not in (None, owner):
+            raise GameNotFound()
+        game = stored.game
+        return LoadedGame(game, self._session(game.setup, game.state, stored.session))
+
+    def _acquire(self, owner: str | None, game_id: str, loaded: LoadedGame) -> Callable[[], None]:
+        handle = self._locks.try_acquire(f"game:{owner}:{game_id}", self._lock_ttl)
+        if handle is None:
+            raise GameBusy()
+        try:
+            with self._cache_lock:
+                if not self._reload_on_read and self._loaded.get((owner, game_id)) is not loaded:
+                    raise GameNotFound()
+                if not loaded.lock.acquire(blocking=False):
+                    raise GameBusy()
+        except BaseException:
+            self._locks.release(handle)
+            raise
+
+        def release():
+            try:
+                self._locks.release(handle)
+            finally:
+                loaded.lock.release()
+        return release
 
     def delete_game(self, owner: str | None, game_id: str) -> None:
         loaded = self.get_game(owner, game_id)
-        self._acquire(owner, game_id, loaded)
+        release = self._acquire(owner, game_id, loaded)
         try:
             with self._cache_lock:
                 self._repository(owner).delete(game_id)
                 self._loaded.pop((owner, game_id), None)
         finally:
-            loaded.lock.release()
+            release()
 
     def start_stream(self, owner: str | None, game_id: str) -> TurnStream:
         return self._turn_stream(owner, game_id)
@@ -211,7 +246,7 @@ class GameService:
 
     def _turn_stream(self, owner: str | None, game_id: str, action: str | None = None) -> TurnStream:
         loaded = self.get_game(owner, game_id)
-        self._acquire(owner, game_id, loaded)
+        unlock = self._acquire(owner, game_id, loaded)
         release_lock = threading.Lock()
         released = False
 
@@ -220,9 +255,13 @@ class GameService:
             with release_lock:
                 if not released:
                     released = True
-                    loaded.lock.release()
+                    unlock()
 
         try:
+            # Re-read *after* acquiring the distributed lock, not before it.
+            if self._reload_on_read:
+                fresh = self._read_game(owner, game_id)
+                loaded.game, loaded.session = fresh.game, fresh.session
             if action is None and loaded.session.started:
                 raise GameAlreadyStarted()
             if action is not None and not loaded.session.started:
@@ -251,6 +290,8 @@ class GameService:
                 assert usage is not None
                 yield TurnCompleted(loaded.session.last_verdict, loaded.state.to_dict(),
                                     loaded.session.summary, deepcopy(events), deepcopy(usage))
+            except PersistenceConflict as error:
+                yield TurnFailed(str(error), status_code=409)
             except ContentBlockedError:
                 yield TurnBlocked()
             except Exception:

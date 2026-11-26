@@ -20,6 +20,26 @@ class StoredGame:
     session: dict
 
 
+class PersistenceConflict(Exception):
+    """The aggregate changed since it was read."""
+
+
+@dataclass(frozen=True)
+class LockHandle:
+    key: str
+    token: str
+
+
+class LockManager(Protocol):
+    def try_acquire(self, key: str, ttl: float) -> LockHandle | None: ...
+    def release(self, handle: LockHandle) -> None: ...
+
+
+class LoginRateLimiter(Protocol):
+    def try_attempt(self, key: str) -> bool: ...
+    def reset(self, key: str) -> None: ...
+
+
 class StreamingAgent(Protocol):
     def stream(self, messages: list[dict]) -> Iterator[str]: ...
 

@@ -9,6 +9,8 @@ from typing import Protocol
 from uuid import uuid4
 
 from fable.domain.users.user import User
+from fable.application.ports import LoginRateLimiter
+from fable.infrastructure.coordination import InMemoryLoginRateLimiter
 from fable.infrastructure.security.passwords import hash_password, verify_password
 
 
@@ -32,12 +34,13 @@ class AuthError(Exception):
 class AuthService:
     def __init__(self, store: AuthStore, *, session_ttl_days: int = 30,
                  allow_registration: bool = True,
-                 clock: Callable[[], datetime] | None = None) -> None:
+                 clock: Callable[[], datetime] | None = None,
+                 rate_limiter: LoginRateLimiter | None = None) -> None:
         self.store = store
         self.session_ttl = timedelta(days=session_ttl_days)
         self.allow_registration = allow_registration
         self.clock = clock or (lambda: datetime.now(timezone.utc))
-        self._failures: dict[str, list[datetime]] = {}
+        self._limiter = rate_limiter or InMemoryLoginRateLimiter(clock=self.clock)
         self._lock = threading.Lock()
         # Unknown users still pay for one real scrypt verification per attempt.
         self._dummy_hash = hash_password(secrets.token_urlsafe(32))
@@ -68,19 +71,13 @@ class AuthService:
         # Include verification in the critical section: simultaneous failed
         # requests cannot bypass the five-attempt limit.
         with self._lock:
-            now = self.clock()
-            cutoff = now - timedelta(minutes=5)
-            self._failures = {name: recent for name, attempts in self._failures.items()
-                              if (recent := [stamp for stamp in attempts if stamp > cutoff])}
-            attempts = self._failures.get(key, [])
-            if len(attempts) >= 5:
+            if not self._limiter.try_attempt(key):
                 raise AuthError(429, "Слишком много попыток. Попробуй позже")
             found = self.store.find_by_username(username)
             valid = verify_password(password, found[1] if found else self._dummy_hash)
             if not found or not valid:
-                self._failures[key] = [*attempts, now]
                 raise AuthError(401, "Неверное имя пользователя или пароль")
-            self._failures.pop(key, None)
+            self._limiter.reset(key)
         return self._session(found[0])
 
     def logout(self, token: str | None) -> None:

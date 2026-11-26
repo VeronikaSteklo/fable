@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     consistency_model: str | None = None
     sessions_path: Path = Path(__file__).resolve().parents[2] / ".fable" / "sessions"
     auth_db_path: Path = Path(__file__).resolve().parents[2] / ".fable" / "fable.db"
+    database_url: str | None = None
+    redis_url: str | None = None
+    db_pool_min: Annotated[int, Field(ge=1)] = 1
+    db_pool_max: Annotated[int, Field(ge=1)] = 10
+    turn_lock_ttl_seconds: Annotated[float, Field(gt=0)] = 600
     session_ttl_days: Annotated[int, Field(ge=1)] = 30
     cookie_secure: bool = False
     allow_registration: bool = True

@@ -13,15 +13,20 @@ dependencies = [
     "openai (>=3.29,<3.30)",
     "chromadb (>=1.5,<1.6)",
     "pydantic (>=2.14.4,<3.0.0)",
+    "psycopg[binary] (>=3.3.9,<4.0.0)",
+    "psycopg-pool (>=3.3.3,<4.0.0)",
+    "redis (>=8.2.0,<9.0.0)",
 ]
 
 [project.scripts]
 fable = "fable.presentation.cli.main:main"
 fable-server = "fable.presentation.web.app:main"
 fable-eval = "fable.evaluation.cli:main"
+fable-migrate = "fable.infrastructure.persistence.postgres.cli:main"
 
 [tool.poetry]
 packages = [{ include = "fable", from = "src" }]
+include = [{ path = "src/fable/infrastructure/persistence/postgres/migrations/*.sql", format = ["sdist", "wheel"] }]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

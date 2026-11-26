@@ -1,6 +1,7 @@
 """Shared composition root for terminal and HTTP entry points."""
 from collections.abc import Callable
-from dataclasses import replace
+from contextlib import ExitStack
+from dataclasses import dataclass, replace
 from typing import Any
 
 from pydantic import ValidationError
@@ -19,6 +20,67 @@ from fable.infrastructure.checks.summarizer import LLMSummarizer
 from fable.infrastructure.agents.master import GameMasterAgent
 from fable.infrastructure.llm.client import ChatModel, build_client
 from fable.infrastructure.llm.embeddings import create_embeddings
+
+
+def create_repository_factory(settings: Settings, *, pool=None, store=None, store_factory=None):
+    """Select once at composition time; every repository remains owner-scoped."""
+    if settings.database_url:
+        from fable.infrastructure.persistence.postgres import PostgresGameRepository
+        if pool is None:
+            raise ValueError("Для PostgreSQL нужен пул соединений")
+        return lambda owner: PostgresGameRepository(pool, owner)
+    from fable.infrastructure.persistence.game_repository import JsonGameRepository
+    from fable.infrastructure.persistence.session_store import JsonSessionStore
+    root = store if store is not None else JsonSessionStore(settings.sessions_path)
+    user_store = store_factory if store_factory is not None else root.for_user
+    return lambda owner: JsonGameRepository(user_store(owner) if owner is not None else root)
+
+
+@dataclass
+class BackendResources:
+    repositories: Any
+    auth_store: Any
+    locks: Any
+    rate_limiter: Any
+    cleanup: ExitStack
+
+    def close(self):
+        self.cleanup.close()
+
+
+def create_backend_resources(settings: Settings, *, store=None, store_factory=None, auth_store=None):
+    from fable.infrastructure.coordination import (
+        InMemoryLockManager, RedisLockManager, RedisLoginRateLimiter,
+    )
+    from fable.infrastructure.persistence.auth_store import SqliteAuthStore
+    cleanup = ExitStack()
+    try:
+        pool = None
+        if settings.database_url:
+            from psycopg_pool import ConnectionPool
+            from fable.infrastructure.persistence.postgres import migrate, PostgresAuthStore
+            pool = ConnectionPool(settings.database_url, min_size=settings.db_pool_min,
+                                  max_size=settings.db_pool_max, open=True, kwargs={"options": "-c timezone=UTC"})
+            cleanup.callback(pool.close)
+            pool.wait(timeout=15)
+            migrate(pool)
+            selected_auth = PostgresAuthStore(pool)
+        else:
+            selected_auth = auth_store if auth_store is not None else SqliteAuthStore(settings.auth_db_path)
+        locks, limiter = InMemoryLockManager(), None
+        if settings.redis_url:
+            from redis import Redis
+            client = Redis.from_url(settings.redis_url, socket_connect_timeout=5, socket_timeout=5)
+            cleanup.callback(client.close)
+            client.ping()
+            locks, limiter = RedisLockManager(client), RedisLoginRateLimiter(client)
+        return BackendResources(
+            create_repository_factory(settings, pool=pool, store=store, store_factory=store_factory),
+            auth_store if auth_store is not None else selected_auth, locks, limiter, cleanup,
+        )
+    except BaseException:
+        cleanup.close()
+        raise
 
 
 def validate_settings(settings: Settings) -> None:

@@ -1,5 +1,6 @@
 """HTTP/authentication and SSE adapters; game use cases live in GameService."""
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 import os
 from pathlib import Path
 from typing import cast
@@ -12,19 +13,18 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from fable.application.auth.service import AuthService, AuthStore
+from fable.application.ports import PersistenceConflict
 from fable.application.game.service import (
     GameService, LoadedGame, GameError, GameNotFound, GameBusy, GameAlreadyStarted,
     GameNotStarted, Chunk, TurnCompleted, TurnBlocked, TurnFailed, TurnStream,
 )
 from fable.application.game.session import GameSession
 from fable.bootstrap import (apply_setup_defaults, create_guardrail, create_session,
-                             load_settings, validate_settings)
+                             load_settings, validate_settings, create_backend_resources)
 from fable.config import Settings
 from fable.domain.game.setup import GameSetup
 from fable.domain.game.state import GameState
 from fable.domain.users.user import User
-from fable.infrastructure.persistence.auth_store import SqliteAuthStore
-from fable.infrastructure.persistence.game_repository import JsonGameRepository
 from fable.infrastructure.persistence.session_store import JsonSessionStore
 from fable.presentation.web.auth import DEV_ORIGINS, OriginCheckMiddleware, configure_auth
 from fable.presentation.web.schemas import SetupBody, ActionBody
@@ -53,18 +53,27 @@ def create_app(settings: Settings | None = None, *, session_factory: SessionFact
     config = settings if settings is not None else load_settings()
     validate_settings(config)
     factory = session_factory if session_factory is not None else create_session
-    root_store = store if store is not None else JsonSessionStore(config.sessions_path)
-    user_store = store_factory if store_factory is not None else root_store.for_user
+    resources = create_backend_resources(config, store=store, store_factory=store_factory, auth_store=auth_store)
     service = GameService(
-        repository_factory=lambda owner: JsonGameRepository(user_store(owner) if owner is not None else root_store),
+        repository_factory=resources.repositories,
         session_factory=lambda setup, state, snapshot: factory(config, setup, state, snapshot),
         guardrail=create_guardrail(config),
         normalize_setup=lambda setup: apply_setup_defaults(setup, config),
+        lock_manager=resources.locks,
+        turn_lock_ttl_seconds=config.turn_lock_ttl_seconds,
+        reload_on_read=bool(config.database_url or config.redis_url),
     )
-    app = FastAPI(title="Fable")
-    auth = AuthService(auth_store if auth_store is not None else SqliteAuthStore(config.auth_db_path),
-                       session_ttl_days=config.session_ttl_days,
-                       allow_registration=config.allow_registration)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        try:
+            yield
+        finally:
+            resources.close()
+
+    app = FastAPI(title="Fable", lifespan=lifespan)
+    auth = AuthService(resources.auth_store, session_ttl_days=config.session_ttl_days,
+                       allow_registration=config.allow_registration, rate_limiter=resources.rate_limiter)
     current_user = configure_auth(app, config, auth)
     default_validation_handler = cast(Callable[[Request, RequestValidationError], Awaitable[Response]],
                                       app.exception_handlers[RequestValidationError])
@@ -76,6 +85,10 @@ def create_app(settings: Settings | None = None, *, session_factory: SessionFact
                 "detail": "Спутники должны быть списком профилей со строковыми полями: имя, роль и характер.",
             })
         return await default_validation_handler(request, error)
+
+    @app.exception_handler(PersistenceConflict)
+    async def persistence_conflict(request: Request, error: PersistenceConflict):
+        return JSONResponse(status_code=409, content={"detail": str(error)})
 
     @app.exception_handler(GameError)
     async def game_error(request: Request, error: GameError):
@@ -124,7 +137,10 @@ def create_app(settings: Settings | None = None, *, session_factory: SessionFact
                     elif isinstance(item, TurnBlocked):
                         yield _event("blocked", {"message": item.message})
                     elif isinstance(item, TurnFailed):
-                        yield _event("error", {"message": item.message})
+                        payload: dict = {"message": item.message}
+                        if item.status_code == 409:
+                            payload["status_code"] = 409
+                        yield _event("error", payload)
             finally:
                 turn.close()
 
@@ -149,11 +165,20 @@ def create_app(settings: Settings | None = None, *, session_factory: SessionFact
 
 def main() -> None:
     try:
-        app = create_app()
+        config = load_settings()
+        workers = int(os.environ.get("FABLE_WORKERS", "1"))
+        if workers < 1:
+            raise ValueError("FABLE_WORKERS должен быть положительным числом")
+        if workers > 1 and not (config.database_url and config.redis_url):
+            raise ValueError("Для FABLE_WORKERS > 1 нужны DATABASE_URL и REDIS_URL (PostgreSQL и Redis)")
         port = int(os.environ.get("FABLE_PORT", "8000"))
         if not 1 <= port <= 65535:
             raise ValueError("FABLE_PORT должен быть от 1 до 65535")
     except ValueError as error:
         print(error)
         return
-    uvicorn.run(app, host=os.environ.get("FABLE_HOST", "127.0.0.1"), port=port)
+    host = os.environ.get("FABLE_HOST", "127.0.0.1")
+    if workers > 1:
+        uvicorn.run('fable.presentation.web.app:create_app', factory=True, workers=workers, host=host, port=port)
+    else:
+        uvicorn.run(create_app(config), host=host, port=port)

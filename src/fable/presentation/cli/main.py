@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 from dataclasses import replace
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -5,7 +6,7 @@ from uuid import uuid4
 from fable.application.safety.guardrails import BLOCK_MESSAGE
 from fable.application.ports import GameRepository, StoredGame
 from fable.bootstrap import (apply_setup_defaults, create_guardrail, create_session,
-                             load_settings, setup_text)
+                             load_settings, setup_text, create_backend_resources)
 from fable.config import Settings
 from fable.domain.companions.companion import Companion, InvalidSetupError
 from fable.domain.game.game import Game
@@ -82,8 +83,18 @@ def main() -> None:
         print(error)
         return
 
+    with ExitStack() as cleanup:
+        if settings.database_url:
+            resources = create_backend_resources(settings)
+            cleanup.callback(resources.close)
+            repository = resources.repositories(None)
+        else:
+            repository = JsonGameRepository(JsonSessionStore(settings.sessions_path))
+        _run(settings, repository)
+
+
+def _run(settings: Settings, repository: GameRepository) -> None:
     try:
-        repository = JsonGameRepository(JsonSessionStore(settings.sessions_path))
         game_id = _choose_saved_game(repository)
         if game_id is not None:
             stored = repository.get(game_id)
