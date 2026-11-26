@@ -34,7 +34,10 @@ class SnapshotTests(unittest.TestCase):
         session.send_action("4")
         restored.send_action("4")
         self.assertEqual(restored_agent.requests[-1], agent.requests[-1])
-        self.assertEqual(restored.to_snapshot(), session.to_snapshot())
+        restored_snapshot, original_snapshot = restored.to_snapshot(), session.to_snapshot()
+        # A new execution has its own wall-clock latency; persisted prior turns remain identical.
+        restored_snapshot["history"][-1]["usage"]["duration_ms"] = original_snapshot["history"][-1]["usage"]["duration_ms"]
+        self.assertEqual(restored_snapshot, original_snapshot)
 
     def test_snapshots_are_detached_and_unstarted_session_restores(self):
         session = GameSession(FakeAgent([]), 4)

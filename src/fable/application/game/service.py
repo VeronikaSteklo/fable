@@ -85,6 +85,7 @@ class TurnCompleted:
     state: dict
     summary: str
     events: list[dict]
+    usage: dict
 
 
 @dataclass(frozen=True)
@@ -246,8 +247,10 @@ class GameService:
                 loaded.game.updated_at = self._clock()
                 self._repository(owner).save(StoredGame(loaded.game, loaded.session.to_snapshot()))
                 successful = True
+                usage = loaded.session.last_usage
+                assert usage is not None
                 yield TurnCompleted(loaded.session.last_verdict, loaded.state.to_dict(),
-                                    loaded.session.summary, deepcopy(events))
+                                    loaded.session.summary, deepcopy(events), deepcopy(usage))
             except ContentBlockedError:
                 yield TurnBlocked()
             except Exception:

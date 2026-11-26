@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from fable.application.safety.guardrails import BLOCK_MESSAGE, RuleGuardrail
 from fable.application.game.session import GameSession
+from fable.application.usage import UsageRecord, TokenUsage, record_usage
 from fable.domain.safety.consistency import ConsistencyVerdict
 from fable.infrastructure.persistence.session_store import JsonSessionStore
 from fable.presentation.web.app import create_app
@@ -59,6 +60,7 @@ class FakeFactory:
                     factory.entered.set()
                     if not factory.release.wait(5):
                         raise RuntimeError("test timeout")
+                record_usage(UsageRecord("master", "fake", TokenUsage(8, 2, 10), 1))
                 state.update(location="Башня", add_facts=["Сцена началась"])
                 yield "Привет\n"
                 if factory.fail:
@@ -151,7 +153,11 @@ class WebTests(unittest.TestCase):
         response = self.client.post(path + "/start")
         parsed = events(response)
         self.assertEqual(parsed[:2], [("chunk", {"text": "Привет\n"}), ("chunk", {"text": "мир"})])
-        self.assertEqual(parsed[-1], ("done", {"consistency": {"consistent": False, "issues": ["Проверь сцену"]},
+        usage = parsed[-1][1]["usage"]
+        self.assertEqual(usage["llm_calls"], 1)
+        self.assertEqual(usage["total_tokens"], 10)
+        self.assertGreaterEqual(usage["duration_ms"], 0)
+        self.assertEqual(parsed[-1], ("done", {"usage": usage, "consistency": {"consistent": False, "issues": ["Проверь сцену"]},
                                               "state": {"location": "Башня", "inventory": [], "facts": ["Сцена началась"], "companions": []},
                                               "summary": "", "events": [
                                                   {"type": "location_changed", "text": "Локация: Башня", "location": "Башня"},
@@ -162,8 +168,12 @@ class WebTests(unittest.TestCase):
         entries = self.client.get(path).json()["entries"]
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["events"], parsed[-1][1]["events"])
+        self.assertEqual(entries[0]["usage"], usage)
+        self.assertEqual(self.client.get(path).json()["usage_total"], usage)
         next_done = events(self.client.post(path + "/actions", json={"action": "Жду"}))[-1][1]
         self.assertEqual(next_done["events"], [])
+        self.assertEqual(self.client.get(path).json()["usage_total"]["llm_calls"], 2)
+        self.assertEqual(self.client.get(path).json()["usage_total"]["total_tokens"], 20)
         self.assertNotIn("events", self.client.get(path).json()["entries"][-1])
 
     def test_actions_persist_and_restore_with_summary(self):

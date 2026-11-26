@@ -1,7 +1,9 @@
 import logging
 from collections.abc import Callable, Generator
 from copy import deepcopy
+from time import perf_counter
 
+from fable.application.usage import UsageMeter, aggregate_usage
 from fable.application.ports import StreamingAgent as StreamingAgent
 from fable.application.narrative.consistency import ConsistencyChecker
 from fable.application.safety.guardrails import Guardrail
@@ -23,9 +25,15 @@ class GameSession:
         summarizer: Summarizer | None = None,
         checker: ConsistencyChecker | None = None,
         context_provider: Callable[[], str] | None = None,
+        model_prices: dict | None = None,
+        usage_clock: Callable[[], float] = perf_counter,
     ) -> None:
         if history_limit < 2:
             raise ValueError("Лимит истории должен быть не меньше 2")
+        self._model_prices = model_prices or {}
+        self._usage_clock = usage_clock
+        self.last_usage: dict | None = None
+        self.last_attempt_usage: dict | None = None
         self._checker = checker
         self._context_provider = context_provider
         self._last_verdict: ConsistencyVerdict | None = None
@@ -42,13 +50,36 @@ class GameSession:
         return "".join(self.start_stream())
 
     def start_stream(self) -> Generator[str, None, None]:
+        yield from self._measure_turn(self._start_stream())
+
+    def _start_stream(self):
         reply = yield from self._stream_reply()
         self._record_reply(reply)
 
     def send_action(self, action: str) -> str:
         return "".join(self.send_action_stream(action))
 
+    def _measure_turn(self, iterator):
+        self.last_usage = None
+        meter = UsageMeter(self._model_prices, clock=self._usage_clock)
+        try:
+            yield from meter.iterate(iterator)
+        except BaseException:
+            raise
+        else:
+            self.last_usage = meter.summary()
+            self._history[-1]["usage"] = deepcopy(self.last_usage)
+        finally:
+            self.last_attempt_usage = meter.summary()
+
+    @property
+    def usage_total(self) -> dict:
+        return aggregate_usage(item.get("usage") for item in self._history if item["role"] == "assistant")
+
     def send_action_stream(self, action: str) -> Generator[str, None, None]:
+        yield from self._measure_turn(self._send_action_stream(action))
+
+    def _send_action_stream(self, action: str):
         if self._guardrail is not None:
             verdict = self._guardrail.check(action)
             if not verdict.allowed:
@@ -135,6 +166,8 @@ class GameSession:
         summarizer: Summarizer | None = None,
         checker: ConsistencyChecker | None = None,
         context_provider: Callable[[], str] | None = None,
+        model_prices: dict | None = None,
+        usage_clock: Callable[[], float] = perf_counter,
     ) -> "GameSession":
         history = snapshot.get("history")
         count = snapshot.get("summarized_count", 0)
@@ -152,7 +185,7 @@ class GameSession:
         ):
             raise ValueError("Некорректный снимок сессии")
         session = cls(agent, history_limit, guardrail, summarizer=summarizer,
-                      checker=checker, context_provider=context_provider)
+                      checker=checker, context_provider=context_provider, model_prices=model_prices, usage_clock=usage_clock)
         session._history = deepcopy(history)
         session._summary = summary
         session._summarized_count = count

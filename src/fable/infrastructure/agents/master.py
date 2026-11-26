@@ -15,13 +15,12 @@ class GameMasterAgent:
                  memory: StoryMemory | None = None, *, setup: GameSetup | None = None,
                  companion_voice: CompanionVoice | None = None) -> None:
         self._model = ChatModel(build_client(settings), settings.model, settings.temperature,
-                                thinking_extra_body(settings))
+                                thinking_extra_body(settings), role='master')
         self._prompt = system_prompt
         self._state = game_state
         self._max_tool_rounds = settings.max_tool_rounds
         self._tools = create_master_tools(game_state, memory, setup=setup,
                                          companion_voice=companion_voice if settings.companions_enabled else None)
-        # TODO: opt-in usage accounting for evaluation, without breaking local servers.
 
     def stream(self, messages: list[dict]) -> Iterator[str]:
         conversation = [{'role': 'system', 'content': self._prompt}, *[dict(m) for m in messages]]

@@ -43,7 +43,7 @@ def _state(state: GameState) -> dict:
 def _game(game_id: str, game: LoadedGame) -> dict:
     return dict(id=game_id, setup=game.setup.to_dict(), started=game.session.started,
                 entries=game.session.to_snapshot()["history"][1:], state=_state(game.state),
-                summary=game.session.summary)
+                summary=game.session.summary, usage_total=game.session.usage_total)
 
 
 def create_app(settings: Settings | None = None, *, session_factory: SessionFactory | None = None,
@@ -119,7 +119,7 @@ def create_app(settings: Settings | None = None, *, session_factory: SessionFact
                         yield _event("done", {
                             "consistency": ({"consistent": verdict.consistent, "issues": list(verdict.issues)}
                                             if verdict is not None else None),
-                            "state": state, "summary": item.summary, "events": item.events,
+                            "state": state, "summary": item.summary, "events": item.events, "usage": item.usage,
                         })
                     elif isinstance(item, TurnBlocked):
                         yield _event("blocked", {"message": item.message})

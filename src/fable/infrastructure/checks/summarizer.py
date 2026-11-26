@@ -14,6 +14,8 @@ class LLMSummarizer:
         if max_chars < 1:
             raise ValueError("Размер резюме должен быть положительным")
         self._model = model
+        if isinstance(model, ChatModel):
+            model.role = 'summarizer'
         self._max_chars = max_chars
 
     def summarize(self, previous_summary: str, messages: list[dict]) -> str:

@@ -19,6 +19,8 @@ class LLMModerator:
 
     def __init__(self, model: ChatModel):
         self._model = model
+        if isinstance(model, ChatModel):
+            model.role = 'moderator'
 
     def check(self, text: str) -> SafetyVerdict:
         try:

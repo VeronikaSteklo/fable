@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 from urllib.parse import quote
 
+from fable.application.usage import UsageMeter
 from fable.evaluation.factory import FakeClock, FakeJudge, create_runtime
 from fable.evaluation.reporting import write_json, write_summary, write_transcript
 
@@ -42,7 +43,7 @@ def run_experiments(scenarios, configs, models, settings, out: Path, *, judge=No
                     companion_temperature=settings.companion_temperature,
                     summary_max_chars=settings.summary_max_chars,
                     embedding_model=settings.embedding_model, memory_search_limit=settings.memory_search_limit,
-                    moderation_enabled=False)
+                    moderation_enabled=False, model_prices=settings.model_prices)
     write_json(out / 'manifest.json', manifest)
     with (out / 'runs.jsonl').open('w', encoding='utf-8') as log:
         for scenario in scenarios:
@@ -88,17 +89,22 @@ def run_experiments(scenarios, configs, models, settings, out: Path, *, judge=No
                                 error = f'{type(failure).__name__}: {failure}'
                             ended = clock()
                             consistency = runtime.checker.last if runtime.checker is not None and error is None else None
+                            usage = runtime.session.last_attempt_usage
                             if error:
                                 runtime.rollback(session_before, state_before)
                             reply = ''.join(chunks)
                             record = dict(**identity, turn=turn, action=action, reply=reply, reply_chars=len(reply),
                                           ttft_ms=(first-started)*1000 if first is not None else None,
-                                          total_ms=(ended-started)*1000, consistency=consistency, error=error)
+                                          total_ms=(ended-started)*1000, consistency=consistency, error=error, usage=usage)
                             records.append(record)
                             log.write(json.dumps(record, ensure_ascii=False) + '\n')
                             log.flush()
                             progress(f'  Ход {turn}/{len(actions)-1}: ' + ('ошибка' if error else f'{len(reply)} символов'))
-                        judgment = judge.evaluate(scenario, records)
+                        judge_meter = UsageMeter(settings.model_prices, clock=FakeClock() if dry_run else time.perf_counter)
+                        def evaluate():
+                            yield judge.evaluate(scenario, records)
+                        judgment = list(judge_meter.iterate(evaluate()))[0]
+                        judgment["usage"] = judge_meter.summary()
                         run = dict(**identity, turns=records, judge=judgment)
                         write_json(out / 'snapshots' / f'{stem}.json', dict(
                             **identity, state=runtime.state.to_dict(), session=runtime.session.to_snapshot(),

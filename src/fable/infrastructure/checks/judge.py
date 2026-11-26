@@ -46,6 +46,8 @@ class LLMJudge:
     """The composition root supplies a temperature-zero model."""
     def __init__(self, model: ChatModel):
         self._model = model
+        if isinstance(model, ChatModel):
+            model.role = 'judge'
 
     def _ask(self, prompt, payload, parser) -> dict:
         try:
@@ -83,6 +85,8 @@ class ObservedConsistencyChecker:
     """Preserve normal fail-open gameplay, but expose parse/API failures to metrics."""
     def __init__(self, model: ChatModel):
         self._model = model
+        if isinstance(model, ChatModel):
+            model.role = 'consistency'
         self.last = None
 
     def check(self, context: str, recent: list[dict], reply: str) -> ConsistencyVerdict:

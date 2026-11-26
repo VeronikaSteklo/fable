@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 class LLMCompanionVoice:
     def __init__(self, model: ChatModel, setup: GameSetup) -> None:
         self._model = model
+        if isinstance(model, ChatModel):
+            model.role = 'companion'
         self._setup = setup
 
     def speak(self, companion: CompanionState, profile: Companion, situation: str) -> str:

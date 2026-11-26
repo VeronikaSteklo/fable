@@ -1,6 +1,6 @@
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypedDict
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,10 +13,17 @@ class ThinkingLevel(str, Enum):
     XHIGH = "xhigh"
 
 
+class ModelPrice(TypedDict):
+    input: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+    output: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+
+
 class Settings(BaseSettings):
     api_key: str
     base_url: str
     model: str
+
+    model_prices: dict[str, ModelPrice] = Field(default_factory=dict)
 
     llm_timeout_seconds: Annotated[float, Field(gt=0)] = 120
     llm_max_retries: Annotated[int, Field(ge=0)] = 2

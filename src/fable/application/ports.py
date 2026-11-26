@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from fable.domain.game.game import Game
+from fable.application.usage import UsageMeter as UsageMeter, UsageRecord as UsageRecord, TokenUsage as TokenUsage
 
 # Re-export established ports without forcing callers to migrate imports.
 from fable.application.companions.ports import CompanionVoice as CompanionVoice

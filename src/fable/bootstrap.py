@@ -121,7 +121,7 @@ def create_session(settings: Settings, setup: GameSetup, state: GameState,
                     if settings.summary_enabled else None),
         checker=(LLMConsistencyChecker(_model(settings, settings.consistency_model))
                  if settings.consistency_check_enabled else None),
-        context_provider=create_context_provider(setup, state),
+        context_provider=create_context_provider(setup, state), model_prices=settings.model_prices,
     )
     if snapshot is not None:
         return GameSession.from_snapshot(snapshot, **options)

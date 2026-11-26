@@ -6,6 +6,7 @@ from pathlib import Path
 from statistics import mean, median
 
 from fable.infrastructure.checks.judge import SCORE_KEYS
+from fable.application.usage import aggregate_usage
 
 
 def _mean(values):
@@ -30,7 +31,16 @@ def aggregate(runs: list[dict]) -> list[dict]:
         judges = [run['judge'] for run in group]
         valid_judges = [judge for judge in judges if judge['valid']]
         probes = [p for judge in judges for p in judge['probes'] if p['eligible']]
+        usages = [t.get("usage") for t in turns]
+        measured = [u for u in usages if u is not None]
+        total = aggregate_usage(usages)
+        judge_total = aggregate_usage(j.get("usage") for j in judges)
         row = dict(scenario=scenario, config=config, model=model, runs=len(group), turns=len(turns),
+                   mean_total_tokens_per_turn=_mean([u["total_tokens"] for u in measured]),
+                   mean_llm_calls_per_turn=_mean([u["llm_calls"] for u in measured]),
+                   total_cost_usd=total["cost_usd"],
+                   estimated_usage_share=_rate(sum(u["estimated"] for u in measured), len(measured)),
+                   judge_total_tokens=judge_total["total_tokens"], judge_cost_usd=judge_total["cost_usd"],
                    errors=len(turns)-len(completed),
                    error_rate=_rate(len(turns)-len(completed), len(turns)),
                    mean_ttft_ms=_mean(ttft), median_ttft_ms=median(ttft) if ttft else None,
@@ -58,7 +68,7 @@ def _cell(value):
     if value is None:
         return '—'
     if isinstance(value, (int, float)):
-        return f'{value:.2f}'
+        return f'{value:.6f}' if isinstance(value, float) and 0 < abs(value) < .01 else f'{value:.2f}'
     return str(value).replace('|', '\\|').replace('\n', ' ')
 
 
@@ -68,11 +78,14 @@ def write_summary(out: Path, runs: list[dict], skipped: list[dict], *, dry_run: 
     with (out / 'summary.csv').open('w', encoding='utf-8', newline='') as file:
         writer = csv.DictWriter(file, fieldnames=fields)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows({k: ('—' if k in ('total_cost_usd', 'judge_cost_usd') and v is None else v) for k, v in row.items()} for row in rows)
     columns = [
         ('scenario', 'Сценарий'), ('config', 'Конфигурация'), ('model', 'Модель'), ('runs', 'R'),
         ('turns', 'Ходы'), ('errors', 'Ошибки'), ('mean_ttft_ms', 'TTFT ср., мс'),
         ('median_ttft_ms', 'TTFT мед., мс'), ('mean_total_ms', 'Полное ср., мс'),
+        ('mean_total_tokens_per_turn', 'Токены ср./ход'), ('mean_llm_calls_per_turn', 'LLM-вызовы ср./ход'),
+        ('total_cost_usd', 'Стоимость, USD'), ('estimated_usage_share', 'Доля оценочных usage'),
+        ('judge_total_tokens', 'Токены judge'), ('judge_cost_usd', 'Цена judge, USD'),
         ('mean_reply_chars', 'Символы ср.'), ('consistency_failure_rate', 'Противоречия'),
         ('consistency_json_valid_rate', 'JSON проверки'), ('coherence', 'Связность'),
         ('character_adherence', 'Герой'), ('no_contradictions', 'Факты'), ('player_agency', 'Агентность'),

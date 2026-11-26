@@ -16,6 +16,8 @@ CONSISTENCY_PROMPT = load_prompt('consistency')
 class LLMConsistencyChecker:
     def __init__(self, model: ChatModel) -> None:
         self._model = model
+        if isinstance(model, ChatModel):
+            model.role = 'consistency'
 
     def check(self, context: str, recent: list[dict], reply: str) -> ConsistencyVerdict:
         try:
