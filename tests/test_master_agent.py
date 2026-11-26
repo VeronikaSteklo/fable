@@ -1,6 +1,7 @@
 import unittest
-from types import SimpleNamespace
 from unittest.mock import patch
+
+from langchain_core.messages import AIMessageChunk
 
 from fable.config import Settings, ThinkingLevel
 from fable.domain.state import GameState
@@ -17,12 +18,12 @@ class GameMasterAgentTests(unittest.TestCase):
         agent_graph.stream.return_value = [
             {
                 "type": "messages",
-                "data": (SimpleNamespace(text="Сцена "), {"langgraph_node": "model"}),
+                "data": (AIMessageChunk(content="Сцена "), {"langgraph_node": "model"}),
             },
             {"type": "updates", "data": {}},
             {
                 "type": "messages",
-                "data": (SimpleNamespace(text="готова"), {"langgraph_node": "model"}),
+                "data": (AIMessageChunk(content="готова"), {"langgraph_node": "model"}),
             },
         ]
         settings = Settings(
