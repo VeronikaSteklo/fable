@@ -121,7 +121,7 @@ class WebTests(unittest.TestCase):
         self.assertFalse(game["started"])
         self.assertEqual(game["entries"], [])
         self.assertEqual(game["summary"], "")
-        self.assertEqual(game["state"], {"location": "", "inventory": [], "facts": []})
+        self.assertEqual(game["state"], {"location": "", "inventory": [], "facts": [], "companions": []})
         self.assertIsNotNone(self.store.load(game["id"]))
 
     def test_blocked_setup(self):
@@ -152,7 +152,7 @@ class WebTests(unittest.TestCase):
         parsed = events(response)
         self.assertEqual(parsed[:2], [("chunk", {"text": "Привет\n"}), ("chunk", {"text": "мир"})])
         self.assertEqual(parsed[-1], ("done", {"consistency": {"consistent": False, "issues": ["Проверь сцену"]},
-                                              "state": {"location": "Башня", "inventory": [], "facts": ["Сцена началась"]},
+                                              "state": {"location": "Башня", "inventory": [], "facts": ["Сцена началась"], "companions": []},
                                               "summary": ""}))
         self.assertIn("Привет", response.text)
         self.assertEqual(self.client.post(path + "/start").status_code, 409)

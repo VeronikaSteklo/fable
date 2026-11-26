@@ -13,6 +13,7 @@ from fable.config import Settings
 from fable.domain.models import GameSetup
 from fable.domain.state import GameState
 from fable.infrastructure.chroma_memory import ChromaMemory
+from fable.infrastructure.companion_agent import LLMCompanionVoice
 from fable.infrastructure.llm_consistency import LLMConsistencyChecker
 from fable.infrastructure.llm_moderator import LLMModerator
 from fable.infrastructure.llm_summarizer import LLMSummarizer
@@ -41,8 +42,13 @@ def load_settings() -> Settings:
 
 def apply_setup_defaults(setup: GameSetup, settings: Settings) -> GameSetup:
     character = setup.character
-    return replace(
+    result = replace(
         setup,
+        companions=tuple(
+            replace(item, name=item.name.strip(), role=item.role.strip(), personality=item.personality.strip())
+            for item in setup.companions
+            if any(value.strip() for value in (item.name, item.role, item.personality))
+        ),
         world=setup.world.strip() or settings.default_world,
         story=setup.story.strip() or settings.default_story,
         character=replace(character, **{
@@ -53,10 +59,13 @@ def apply_setup_defaults(setup: GameSetup, settings: Settings) -> GameSetup:
             }.items()
         }),
     )
+    result.validate()
+    return result
 
 
 def setup_text(setup: GameSetup) -> str:
-    return "\n".join([setup.world, setup.story, setup.character.description, setup.character.goal])
+    return "\n".join([setup.world, setup.story, *setup.character.to_dict().values(),
+                      *(value for item in setup.companions for value in item.to_dict().values())])
 
 
 def create_guardrail(settings: Settings) -> CompositeGuardrail:
@@ -66,9 +75,9 @@ def create_guardrail(settings: Settings) -> CompositeGuardrail:
     return CompositeGuardrail(guardrails)
 
 
-def _model(settings: Settings, model: str | None) -> ChatOpenAI:
+def _model(settings: Settings, model: str | None, *, temperature: float = 0) -> ChatOpenAI:
     return ChatOpenAI(model=model or settings.model, api_key=settings.api_key,
-                      base_url=settings.base_url, temperature=0)
+                      base_url=settings.base_url, temperature=temperature)
 
 
 def create_context_provider(setup: GameSetup, state: GameState) -> Callable[[], str]:
@@ -78,12 +87,17 @@ def create_context_provider(setup: GameSetup, state: GameState) -> Callable[[], 
         f"Имя: {character.name}\nРоль: {character.role}\nЦель: {character.goal}\n"
         f"Описание: {character.description or 'не указано'}"
     )
+    if setup.companions:
+        permanent += "\nПрофили спутников:\n" + "\n".join(
+            f"{item.name}: {item.role}; {item.personality}" for item in setup.companions
+        )
     return lambda: permanent + "\n\n" + state.to_context()
 
 
 def create_session(settings: Settings, setup: GameSetup, state: GameState,
                    snapshot: dict | None = None) -> GameSession:
     validate_settings(settings)
+    setup.validate()
     memory = None
     if settings.embedding_model:
         memory = ChromaMemory(
@@ -93,8 +107,12 @@ def create_session(settings: Settings, setup: GameSetup, state: GameState,
             persist_directory=settings.memory_store_path,
             search_limit=settings.memory_search_limit,
         )
-    agent = GameMasterAgent(settings, build_system_prompt(setup, vector_memory_enabled=memory is not None),
-                            state, memory)
+    voice = (LLMCompanionVoice(
+        _model(settings, settings.companion_model, temperature=settings.companion_temperature), setup,
+    ) if setup.companions and settings.companions_enabled else None)
+    agent = GameMasterAgent(settings, build_system_prompt(
+        setup, vector_memory_enabled=memory is not None, companions_enabled=settings.companions_enabled,
+    ), state, memory, setup=setup, companion_voice=voice)
     options: dict[str, Any] = dict(
         agent=agent, history_limit=settings.history_limit, guardrail=create_guardrail(settings),
         summarizer=(LLMSummarizer(_model(settings, settings.summary_model), settings.summary_max_chars)

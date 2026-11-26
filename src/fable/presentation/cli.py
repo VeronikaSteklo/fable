@@ -1,3 +1,4 @@
+from dataclasses import replace
 from uuid import uuid4
 
 from fable.application.guardrails import BLOCK_MESSAGE
@@ -5,6 +6,7 @@ from fable.application.persistence import build_game_record, parse_game_record
 from fable.bootstrap import (apply_setup_defaults, create_guardrail, create_session,
                              load_settings, setup_text)
 from fable.config import Settings
+from fable.domain.companion import Companion, InvalidSetupError
 from fable.domain.models import Character, GameSetup
 from fable.domain.safety import ContentBlockedError
 from fable.domain.state import GameState
@@ -27,9 +29,32 @@ def _create_game_setup(settings: Settings) -> GameSetup:
     print("=== Создание игры ===")
     world = input("Опиши мир: ").strip()
     story = input("Опиши завязку истории: ").strip()
-    return apply_setup_defaults(
+    setup = apply_setup_defaults(
         GameSetup(world=world, story=story, character=_create_character(settings)), settings,
     )
+    for _ in range(3):
+        while True:
+            answer = input("Добавить спутника? (д/н): ").strip().casefold()
+            if answer in {"", "н", "нет"}:
+                return setup
+            if answer in {"д", "да"}:
+                break
+            print("Ответь «д» или «н».")
+        while True:
+            companion = Companion(
+                name=input("Имя спутника: ").strip(),
+                role=input("Роль спутника: ").strip(),
+                personality=input("Характер спутника: ").strip(),
+            )
+            candidate = replace(setup, companions=(*setup.companions, companion))
+            try:
+                candidate.validate()
+            except InvalidSetupError as error:
+                print(error)
+                continue
+            setup = candidate
+            break
+    return setup
 
 
 def _choose_saved_game(store: JsonSessionStore) -> str | None:
@@ -74,7 +99,7 @@ def main() -> None:
                     break
                 print(BLOCK_MESSAGE + " Измени описание мира или героя.\n")
             game_id = uuid4().hex
-            game_state = GameState()
+            game_state = GameState.for_setup(setup)
             session = create_session(settings, setup, game_state)
             record = build_game_record(game_id, setup, game_state, session)
             store.save(game_id, record)

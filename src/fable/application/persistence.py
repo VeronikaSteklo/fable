@@ -38,11 +38,15 @@ def build_game_record(
 
 
 def parse_game_record(record: dict) -> GameRecord:
+    setup = GameSetup.from_dict(record["setup"])
+    state = GameState.from_dict(record["state"])
+    if "companions" not in record["state"]:
+        state.companions = GameState.for_setup(setup).companions
     return GameRecord(
         id=record["id"],
         created_at=record["created_at"],
         updated_at=record["updated_at"],
-        setup=GameSetup.from_dict(record["setup"]),
-        state=GameState.from_dict(record["state"]),
+        setup=setup,
+        state=state,
         session=deepcopy(record["session"]),
     )
