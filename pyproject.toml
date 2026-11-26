@@ -18,6 +18,7 @@ dependencies = [
 [project.scripts]
 fable = "fable.game:main"
 fable-server = "fable.presentation.web:main"
+fable-eval = "fable.evaluation.cli:main"
 
 [tool.poetry]
 packages = [{ include = "fable", from = "src" }]
