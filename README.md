@@ -231,6 +231,94 @@ healthchecks и trap teardown; не читает `.env` и не трогает �
 Используй **только тестовую БД и Redis DB**: проверки создают и удаляют собственные
 записи, схема остаётся после запуска против внешней БД.
 
+## CI/CD (GitLab)
+
+`.gitlab-ci.yml` запускается **только в GitLab**: наличие файла в GitHub не запускает
+GitLab pipeline и не настраивает GitHub Actions. GitHub можно оставить основным remote,
+а GitLab добавить вторым (предварительно создай пустой проект в GitLab):
+
+```bash
+git remote add gitlab <url>
+git push gitlab --all
+git push gitlab --tags
+```
+
+Pipeline создаётся для merge request, default branch, `develop` и тегов. Push в ветку
+с открытым MR не создаёт второй pipeline. Этапы:
+
+1. **lint** — Poetry 2.4.1: `poetry check --lock`, компиляция Python (`compileall`), без новых линтеров.
+2. **test** — backend: установка из lock и unittest с JUnit-отчётом (CI-only formatter
+   `unittest-xml-reporting`); frontend: Node 22, `npm ci`, восемь проверочных скриптов,
+   `tsc --noEmit` и Vite build. `frontend/dist` хранится один день.
+3. **integration** — настоящий PostgreSQL 17 и Redis 7 как job services, ожидание
+   `SELECT 1`/`PING`, затем `tests/integration`. Тестовые URL не используют серверные секреты.
+4. **build** — Docker 27 + DinD, cache-from `:latest`, сборка и запуск образа с dummy
+   LLM-настройками до статуса healthy. MR только проверяет образ, без push; default
+   branch/`develop`/теги публикуют `:$CI_COMMIT_SHORT_SHA`, default branch также
+   `:latest`, тег также `:$CI_COMMIT_TAG`. Имена Git-тегов должны быть допустимыми
+   Docker-тегами (например `v1.0.0`, без `/`).
+5. **deploy** — ручной, только default branch/теги при заданном `DEPLOY_HOST`;
+   развёртывает именно SHA-образ, сериализует production-деплои и ждёт healthy.
+
+Нужен GitLab Runner с Docker executor и **privileged DinD**, общим TLS-каталогом
+`/certs/client` для job/service; registry проекта должен быть включён. Не выдавай
+такой runner недоверенным проектам. Python/Poetry и npm используют project-local
+кэши с ключами по lock-файлам; `.venv` не кэшируется. `SKIP_TESTS=true` пропускает
+lint/test/integration, но **не** Docker build и smoke test.
+
+### CI/CD variables
+
+В GitLab: Settings → CI/CD → Variables. Deploy-переменные ограничь production и
+защищёнными refs; разреши deploy только доверенным пользователям. Секретные значения
+делай masked/hidden, где GitLab поддерживает это для выбранного типа переменной.
+
+| Переменная | Обязательность и назначение |
+| --- | --- |
+| `SSH_PRIVATE_KEY` | Для deploy: **File**, приватный ключ выделенного deploy-пользователя; либо вариант ниже. CRLF удаляется перед использованием. |
+| `SSH_PRIVATE_KEY_B64` | Альтернатива File: base64 ключа; CRLF удаляется и из base64, и из декодированного ключа. Не задавай оба варианта. |
+| `DEPLOY_HOST` | Для deploy: DNS-имя/IP сервера; без него job не появляется. SSH-порт 22. |
+| `DEPLOY_USER` | Для deploy: SSH-пользователь с доступом к Docker и каталогу приложения. |
+| `DEPLOY_PATH` | Необязательно: `/opt/fable`; абсолютный путь без пробелов, только буквы/цифры и `_./-`. |
+| `DEPLOY_URL` | Необязательно: публичный HTTPS URL для ссылки environment `production`. |
+| `SSH_KNOWN_HOSTS` | Рекомендуется: заранее проверенная строка/строки `known_hosts` (обычная variable, не File). Без неё используется `ssh-keyscan`, что не защищает первый контакт от MITM. |
+| `CI_DEPLOY_USER`, `CI_DEPLOY_PASSWORD` | Рекомендуется: пара deploy token с `read_registry`. Если пара не задана, используются `CI_REGISTRY_USER` / `CI_JOB_TOKEN`; временный Docker login удаляется после deploy. Задавай обе переменные вместе. |
+| `SKIP_TESTS` | Необязательно: строка `true` для пропуска lint/test/integration, например `git push -o ci.variable=SKIP_TESTS=true gitlab`. |
+
+`CI_REGISTRY`, `CI_REGISTRY_IMAGE`, `CI_REGISTRY_USER`, `CI_REGISTRY_PASSWORD` и
+`CI_JOB_TOKEN` предоставляет GitLab. LLM API-ключи и пароль production PostgreSQL
+**не нужны в CI** и не должны попадать в репозиторий, artifacts или Docker image.
+
+### Однократная подготовка сервера
+
+- Установи Docker Engine и Compose plugin **>= 2.24.4** (production override использует
+  `!reset`/`!override`, чтобы удалить `build` и заменить, а не добавить публикацию порта).
+- Создай deploy-пользователя, добавь публичный ключ в `authorized_keys`, проверь SSH
+  host fingerprint отдельно. Доступ к Docker эквивалентен root: используй отдельный ключ.
+- Создай `/opt/fable` (или `DEPLOY_PATH`), выдай deploy-пользователю права на каталог.
+- Только на сервере создай `$DEPLOY_PATH/.env` с правами `600`: `API_KEY`, `BASE_URL`,
+  `MODEL`, **сильный `POSTGRES_PASSWORD`**; при необходимости `POSTGRES_USER=fable`,
+  `POSTGRES_DB=fable`, `ALLOW_REGISTRATION`, параметры embeddings и LLM. Для пароля
+  используй длинную случайную URL-safe строку: он входит в PostgreSQL URL; символы
+  `@`, `:`, `/`, `#`, `%` потребуют URL-кодирования. Не задавай отдельный `DATABASE_URL`:
+  production override строит его из `POSTGRES_*`; Redis уже доступен как `redis:6379`.
+- `COOKIE_SECURE` по умолчанию `true`; настрой HTTPS reverse proxy на
+  `127.0.0.1:8000`. При необходимости измени `FABLE_PORT_BIND=127.0.0.1:8000`;
+  не публикуй PostgreSQL/Redis наружу. `.env` никогда не копируется из CI.
+- Настрой backup постоянных томов и восстановление. Инициализационный пароль
+  PostgreSQL применяется только к новому тому; его смена в `.env` не меняет пароль
+  уже созданной роли. Миграции применяются при старте приложения.
+- Включи registry, настрой CI variables и runner, дождись успешного build на
+  защищённой default branch/теге, затем нажми manual **deploy**. Job копирует только
+  два Compose-файла, выполняет `pull`, `up -d --no-build --remove-orphans --wait`
+  и проверяет health приложения. Для отката вручную выбери предыдущий SHA-образ:
+
+```bash
+cd /opt/fable
+export FABLE_IMAGE=registry.gitlab.com/<namespace>/<project>:<previous-short-sha>
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build --remove-orphans --wait
+```
+
 ## Сохранения и память
 
 Без DATABASE_URL игры автоматически сохраняются после каждого завершённого ответа в `SESSIONS_PATH` (по умолчанию `.fable/sessions`). CLI при запуске предлагает продолжить одну из пяти последних игр; в веб-интерфейсе доступен список сохранений. CLI использует корневой каталог, а backend — отдельные подкаталоги пользователей; старые CLI-сохранения не отображаются в веб-интерфейсе.
