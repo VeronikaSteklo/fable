@@ -98,7 +98,15 @@ class CompanionWebTests(unittest.TestCase):
                          "present": False, "notes": ["Мира помогла Лису"]}]
             self.assertEqual(done[0], "done")
             self.assertEqual(done[1]["state"]["companions"], expected)
-            self.assertEqual(other.get(path).json()["state"]["companions"], expected)
+            companion_events = [event for event in done[1]["events"] if "companion" in event]
+            self.assertEqual([event["type"] for event in companion_events],
+                             ["companion_attitude_changed", "companion_learned", "companion_left"])
+            self.assertTrue(all(event["companion"] == "Лис" and event["text"] for event in companion_events))
+            self.assertEqual(companion_events[0]["delta"], 20)
+            self.assertEqual(companion_events[0]["value"], 20)
+            restored = other.get(path).json()
+            self.assertEqual(restored["state"]["companions"], expected)
+            self.assertEqual(restored["entries"][-1]["events"], done[1]["events"])
         with TestClient(create_app(self.config, session_factory=self.factory, store=self.root_store)) as other:
             self.authenticate(other)
             self.assertEqual(other.get(path).json()["state"]["companions"], expected)
@@ -125,6 +133,6 @@ class CompanionWebTests(unittest.TestCase):
             self.authenticate(other)
             game = other.post("/api/games", json={**EMPTY_SETUP, "companions": [PROFILE]}).json()
             self.factory.fail = True
-            with self.assertLogs("fable.presentation.web", "ERROR"):
+            with self.assertLogs("fable.application.game_service", "ERROR"):
                 self.assertEqual(events(other.post(f'/api/games/{game["id"]}/start'))[-1][0], "error")
             self.assertEqual(other.get(f'/api/games/{game["id"]}').json(), game)

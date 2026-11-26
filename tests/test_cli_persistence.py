@@ -41,6 +41,10 @@ class CLIPersistenceTests(unittest.TestCase):
         self.assertEqual(record["setup"]["world"], self.config.default_world)
         self.assertEqual(len(record["session"]["history"]), 4)
         self.assertIn("consistency", record["session"]["history"][-1])
+        self.assertIsNone(record["owner_id"])
+        self.assertEqual([event["type"] for event in record["session"]["history"][1]["events"]],
+                         ["location_changed", "fact_established"])
+        self.assertNotIn("events", record["session"]["history"][-1])
 
     def test_resume_prints_last_reply_and_preserves_created_at(self):
         state = GameState()

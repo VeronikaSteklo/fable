@@ -1,21 +1,16 @@
 from langchain.tools import tool
 from langchain_core.tools import BaseTool
-from typing import Protocol
 
+from fable.application.ports import StoryMemory as StoryMemory
 from fable.application.companions import CompanionVoice
 from fable.domain.models import GameSetup
 from fable.domain.state import GameState
 
 
-class StoryMemory(Protocol):
-    def remember(self, event: str) -> str: ...
-
-    def search(self, query: str) -> list[str]: ...
-
-
 def create_master_tools(state: GameState, memory: StoryMemory | None = None, *,
                         setup: GameSetup | None = None,
                         companion_voice: CompanionVoice | None = None) -> list[BaseTool]:
+    # Tools translate model calls; only domain methods enforce changes and emit events.
     @tool
     def read_game_state() -> str:
         """Прочитать текущую локацию, инвентарь, факты игры и состояние спутников."""
