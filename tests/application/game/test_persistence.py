@@ -15,7 +15,7 @@ from tests.application.game.test_session import FakeAgent
 
 class PersistenceTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = TemporaryDirectory(dir=os.environ["TMPDIR"])
+        self.tmp = TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.directory = Path(self.tmp.name) / "sessions"
         self.setup = GameSetup("Мир", "История", Character("Мира", "Маг", "Цель", "", "Фэнтези"))
