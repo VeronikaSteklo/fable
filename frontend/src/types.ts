@@ -45,10 +45,18 @@ export interface GameState {
   companions: CompanionState[];
 }
 
+export interface DomainEvent {
+  type: string;
+  text: string;
+  companion?: string;
+  delta?: number;
+}
+
 export interface GameEntry {
   role: 'user' | 'assistant';
   content: string;
   consistency?: Consistency | null;
+  events?: DomainEvent[];
 }
 
 export interface Game {
@@ -68,6 +76,7 @@ export interface GameListItem {
 }
 
 export interface StreamResult {
+  events: DomainEvent[];
   consistency: Consistency | null;
   state: GameState;
   summary: string;
@@ -85,6 +94,7 @@ export interface StoryEntry {
   kind: 'master' | 'player';
   text: string;
   consistency?: Consistency | null;
+  events?: DomainEvent[];
   rejected?: boolean;
   incomplete?: boolean;
 }

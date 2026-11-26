@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { getGame, sendAction, startGame } from '../api';
-import type { Game, StoryEntry, StreamHandlers } from '../types';
+import type { DomainEvent, Game, StoryEntry, StreamHandlers } from '../types';
 
 type Props = { gameId: string; onExit: () => void };
 type Retry = { action?: string; baseline: number };
@@ -9,10 +9,24 @@ type Retry = { action?: string; baseline: number };
 let entrySeq = 0;
 const newEntryId = () => `entry-${Date.now().toString(36)}-${(entrySeq++).toString(36)}`;
 
+function eventMarker(event: DomainEvent): string {
+  switch (event.type) {
+    case 'location_changed': return '📍';
+    case 'item_acquired': return '+';
+    case 'item_lost': return '−';
+    case 'fact_established': return '✦';
+    case 'companion_attitude_changed': return (event.delta ?? 0) > 0 ? '↑' : (event.delta ?? 0) < 0 ? '↓' : '↔';
+    case 'companion_learned': return '💭';
+    case 'companion_left': return '←';
+    case 'companion_returned': return '→';
+    default: return '•';
+  }
+}
+
 function storyEntries(game: Game): StoryEntry[] {
   return game.entries.map((entry, index) => ({
     id: `saved-${index}`, kind: entry.role === 'user' ? 'player' : 'master',
-    text: entry.content, consistency: entry.consistency,
+    text: entry.content, consistency: entry.consistency, events: entry.events ?? [],
   }));
 }
 
@@ -58,10 +72,10 @@ export default function GameScreen({ gameId, onExit }: Props) {
       },
       onDone(result) {
         if (signal.aborted) return;
-        setEntries((saved) => saved.map((entry) => entry.id === masterId ? { ...entry, consistency: result.consistency } : entry));
+        setEntries((saved) => saved.map((entry) => entry.id === masterId ? { ...entry, consistency: result.consistency, events: result.events ?? [] } : entry));
         setGame({ ...current, started: true, state: result.state, summary: result.summary,
           entries: [...current.entries, ...(action ? [{ role: 'user' as const, content: action }] : []),
-            { role: 'assistant', content: text, consistency: result.consistency }],
+            { role: 'assistant', content: text, consistency: result.consistency, events: result.events ?? [] }],
         });
       },
       onBlocked(message) {
@@ -156,6 +170,18 @@ export default function GameScreen({ gameId, onExit }: Props) {
           <p>{entry.text || (busy ? 'История рождается…' : 'Ответ завершён.')}</p>
           {entry.incomplete && <small className="muted">Ответ прерван и может быть неполным.</small>}
           {entry.kind === 'master' && entry.consistency?.consistent === false && <small className="consistency-warning">Проверка согласованности: {entry.consistency.issues.join('; ') || 'возможны противоречия'}</small>}
+          {entry.kind === 'master' && !!entry.events?.length && <div className="turn-changes">
+            <span className="turn-changes-label">Изменения за ход</span>
+            <ul className="turn-events" aria-label="Изменения за ход">
+              {entry.events.map((event, index) => {
+                const delta = event.type === 'companion_attitude_changed' ? event.delta ?? 0 : 0;
+                return <li className={`turn-event${delta > 0 ? ' positive' : delta < 0 ? ' negative' : ''}`} key={index}>
+                  <span className="turn-event-marker" aria-hidden="true">{eventMarker(event)}</span>
+                  <span>{event.text}</span>
+                </li>;
+              })}
+            </ul>
+          </div>}
         </article>)}
         {busy && <p className="muted" role="status">{game ? 'Рассказчик пишет…' : 'Загружаем историю…'}</p>}
         {notice && <p className="notice" role="status">{notice}</p>}

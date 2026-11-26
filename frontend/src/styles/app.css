@@ -61,6 +61,14 @@ textarea:disabled { opacity: .65; }
 .notice p { margin: 0; }
 .error-notice, .consistency-warning { color: var(--color-accent-hover); }
 .consistency-warning { display: block; margin-top: .6rem; font-size: .78rem; }
+.turn-changes { margin-top: .8rem; color: var(--color-muted); font-size: .76rem; line-height: 1.5; }
+.turn-changes-label { font-size: .7rem; }
+.turn-events { display: flex; flex-wrap: wrap; gap: .35rem .5rem; margin: .35rem 0 0; padding: 0; list-style: none; }
+.turn-event { display: flex; align-items: baseline; gap: .4rem; max-width: 100%; min-width: 0; padding: .2rem .5rem; border: 1px solid var(--color-border); border-radius: var(--radius); background: var(--color-surface); overflow-wrap: anywhere; }
+.turn-event-marker { flex: 0 0 1em; text-align: center; }
+.turn-event.positive .turn-event-marker { color: var(--color-accent); }
+.turn-event.negative .turn-event-marker { color: var(--color-accent-hover); }
+@media (max-width: 480px) { .turn-events { flex-direction: column; align-items: flex-start; } }
 .story-entry.rejected { border: 1px dashed var(--color-accent); }
 .saved-games { margin-top: var(--space-4); border-top: 1px solid var(--color-border); padding-top: var(--space-2); }
 .saved-games h2, .game-state h2 { font-family: var(--font-story); font-size: 1.1rem; font-weight: 400; }

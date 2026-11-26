@@ -24,7 +24,7 @@ try {
   assert.equal(calls.at(-1)[1].method, 'DELETE');
   mock({ detail: 'Нельзя' }, 422);
   await assert.rejects(createGame(setup), (error) => error instanceof ApiError && error.status === 422 && error.message === 'Нельзя');
-  const result = { consistency: { consistent: false, issues: ['test'] }, state: game.state, summary: 'summary' };
+  const result = { consistency: { consistent: false, issues: ['test'] }, state: game.state, summary: 'summary', events: [] };
   async function run(wire, action = false) {
     const events = [];
     const controller = new AbortController();
