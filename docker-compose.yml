@@ -10,11 +10,46 @@ services:
       MEMORY_STORE_PATH: /data/chroma
       SESSIONS_PATH: /data/sessions
       AUTH_DB_PATH: /data/fable.db
+      DATABASE_URL: ${DATABASE_URL:-postgresql://fable:fable@postgres:5432/fable}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      FABLE_WORKERS: ${FABLE_WORKERS:-1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - fable-data:/data
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fable}
+      POSTGRES_USER: ${POSTGRES_USER:-fable}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fable}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
 
 volumes:
   fable-data:
+  postgres-data:
+  redis-data:

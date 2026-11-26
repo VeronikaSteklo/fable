@@ -55,7 +55,7 @@ bootstrap.py    общая композиция; config.py — настройк�
 | Вердикт согласованности | `ConsistencyVerdict`: согласован ли ответ с контекстом; замечания направляются мастеру на следующем ходе. Отрицательный вердикт не отменяет ход. |
 | Доменное событие | Неизменяемое описание реально произошедшего изменения состояния. Не команда, не текстовый токен модели и не запись в векторной памяти. |
 | Проверка безопасности | Проверка исходных настроек или действия. Блокировка действия не добавляет его в историю. |
-| Сохранение | Агрегат игры и снимок повествовательной сессии, записанные атомарной заменой одного JSON-файла. |
+| Сохранение | Агрегат игры и снимок повествовательной сессии: атомарная замена JSON-файла либо транзакционное сохранение JSONB в PostgreSQL с проверкой версии. |
 
 ## Ограниченные контексты
 
@@ -73,7 +73,7 @@ bootstrap.py    общая композиция; config.py — настройк�
 ## Агрегат, сущности и объекты-значения
 
 - **Корень агрегата `Game`** (`domain/game/game.py`): `id`, `owner_id`, `setup`, `state`,
-  `created_at`, `updated_at`. `Game.create(id, owner_id, setup, now)` проверяет
+  `created_at`, `updated_at`, `version` (optimistic concurrency PostgreSQL; 0 у нового агрегата). `Game.create(id, owner_id, setup, now)` проверяет
   настройки и создаёт начальные состояния спутников. `owner_id=None` допустим для
   CLI и старых файлов. `pull_events()` забирает и очищает события вложенного состояния.
 - **Сущность состояния мира `GameState`** (`domain/game/state.py`): изменения только
@@ -133,14 +133,16 @@ API сохраняет прежние поля и добавляет:
 
 | Порт / граница | Реализация / адаптер |
 | --- | --- |
-| `GameRepository` (`application/ports.py`) | `JsonGameRepository` (`infrastructure/persistence/game_repository.py`) поверх `JsonSessionStore`: `get`, `add`, `save`, `delete`, `list_summaries` |
+| `GameRepository` (`application/ports.py`) | `JsonGameRepository` поверх `JsonSessionStore` (по умолчанию); `PostgresGameRepository(pool, owner_id)` (`infrastructure/persistence/postgres/`) при DATABASE_URL. Оба: `get`, `add`, `save`, `delete`, `list_summaries` |
 | `StreamingAgent` (`application/ports.py`; переэкспорт в `session.py`) | `GameMasterAgent` (`infrastructure/agents/master.py`): собственный streaming tool-loop через OpenAI SDK; `PlainStreamingAgent` — baseline без tools |
 | `Guardrail` (`application/safety/guardrails.py`) | `RuleGuardrail`, `CompositeGuardrail`, `LLMModerator` (OpenAI SDK + Pydantic JSON Schema) |
 | `Summarizer` (`application/narrative/summary.py`) | `LLMSummarizer` (OpenAI SDK, обычный текст) |
 | `ConsistencyChecker` (`application/narrative/consistency.py`) | `LLMConsistencyChecker` (OpenAI SDK + Pydantic JSON Schema) |
 | `CompanionVoice` (`application/companions/ports.py`) | `LLMCompanionVoice` (OpenAI SDK, обычный текст) |
 | `StoryMemory` (`application/ports.py`; переэкспорт в `master_tools.py`) | `ChromaMemory`: прямой `chromadb.PersistentClient`, SDK embeddings, фильтр `campaign_id` |
-| `AuthStore` (`application/auth/service.py`) | `SqliteAuthStore` |
+| `AuthStore` (`application/auth/service.py`) | `SqliteAuthStore` (по умолчанию); `PostgresAuthStore(pool)` при DATABASE_URL |
+| `LockManager` (`application/ports.py`) | `InMemoryLockManager`; при REDIS_URL — `RedisLockManager`: SET NX PX, token, Lua compare-and-delete |
+| `LoginRateLimiter` (`application/ports.py`) | `InMemoryLoginRateLimiter` (скользящее окно); при REDIS_URL — `RedisLoginRateLimiter` (INCR + EXPIRE в Lua, фиксированное окно 5/300 секунд) |
 | Фабрики репозитория и сессии, нормализация настроек, часы, генератор id | Внедряются в `GameService`; HTTP-композиция в `create_app`, создание LLM-компонентов в `bootstrap.py` |
 | Входной HTTP-адаптер | `presentation/web/`: `app.py` — маршруты, ошибки и static mount; `schemas.py` — запросы, `sse.py` — сериализация и cleanup, `auth.py` — cookie |
 | Входной CLI-адаптер | `presentation/cli/main.py`: интерактивный UX, тот же агрегат и репозиторий в корне каталога сохранений |
@@ -250,9 +252,39 @@ flowchart TD
 
 ## Границы гарантий
 
-Блокировки и кэш — в памяти одного backend-процесса. Межпроцессной транзакции,
-событийной шины, outbox и распределённого lock нет. Отдельные вызовы векторной
-памяти не входят в откат JSON-состояния/истории; это прежнее ограничение.
+По умолчанию блокировки и LoadedGame-кэш — в памяти одного backend-процесса.
+Опциональный multi-worker режим требует DATABASE_URL + REDIS_URL:
+`FABLE_WORKERS=N` запускает Uvicorn по import string с `factory=True`; родитель
+не создаёт пул до fork/spawn. Каждый воркер имеет свой пул (DB_POOL_MIN=1,
+DB_POOL_MAX=10), Redis-клиент; lifespan освобождает ресурсы. Выбор адаптеров и
+owner-scoped фабрика находятся в `bootstrap.py`; без URL нет внешних подключений.
+
+PostgreSQL хранит users (lower-unique username), auth_sessions (SHA-256 токена,
+FK ON DELETE CASCADE, индекс expires_at), games (nullable owner_id FK для CLI,
+JSONB setup/state/session, title, timestamps, turns, version). Индекс игр:
+(owner_id, updated_at DESC). Общий `stored_game_record` строит JSON/JSONB-конверт,
+`parse_game_record` восстанавливает legacy-состояния. `save` проверяет version и
+инкрементирует её атомарно; неуспех даёт PersistenceConflict, а не lost update.
+Нумерованные SQL из wheel применяются транзакционно под advisory lock, версии
+учитываются в schema_migrations; отдельный entry point — `fable-migrate`.
+
+При любом внешнем адаптере LoadedGame-кэш выключен: GET читает БД/файл заново,
+ход повторяет чтение под game-lock, перед проверкой started и снимками отката.
+Реконструкция агента на чтении — сознательная плата за отсутствие stale state.
+GameService освобождает локальный и внешний lock также при отмене до итерации.
+TTL Redis по умолчанию 600 секунд, без renewal: оператор должен выбрать TTL
+больше максимального полного хода с учётом tools/SDK retries/вспомогательных LLM.
+Optimistic version остаётся защитой при истечении аренды. После начала SSE
+конфликт сохранения передаётся как error/status_code=409 (HTTP уже отправлен);
+до потока — HTTP 409. Список summaries пока не кэшируется в Redis: прямой
+индексированный SELECT избегает отдельного протокола race-free invalidation.
+CLI использует то же PostgreSQL-хранилище для owner_id=NULL, но не web-lock;
+не запускайте одну CLI-игру параллельно в нескольких терминалах.
+
+Нет событийной шины и outbox. Отдельные вызовы векторной памяти не входят в
+откат JSON/JSONB-состояния/истории; локальная Chroma не стала multi-process
+сервисом. В multi-worker режиме оставьте EMBEDDING_MODEL незаданным до подключения
+общего сервера векторной памяти.
 `GameSession` по-прежнему владеет алгоритмами резюме и согласованности, а
 существующие функции `build_game_record` / `parse_game_record` сохранены для
 совместимости. Проверки не требуют живого LLM: используются fake-агенты,
