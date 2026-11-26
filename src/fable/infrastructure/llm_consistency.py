@@ -1,7 +1,8 @@
 import json
 import logging
 
-from langchain_openai import ChatOpenAI
+from fable.infrastructure.openai_client import ChatModel, complete_structured
+from fable.infrastructure.structured_models import ConsistencyOutput
 
 from fable.domain.consistency import ConsistencyVerdict
 
@@ -21,18 +22,18 @@ CONSISTENCY_PROMPT = """Ты проверяешь согласованность
 
 
 class LLMConsistencyChecker:
-    def __init__(self, model: ChatOpenAI) -> None:
+    def __init__(self, model: ChatModel) -> None:
         self._model = model
 
     def check(self, context: str, recent: list[dict], reply: str) -> ConsistencyVerdict:
         try:
-            response = self._model.invoke([
+            response = complete_structured(self._model, [
                 {"role": "system", "content": CONSISTENCY_PROMPT},
                 {"role": "user", "content": json.dumps({
                     "context": context, "recent": recent, "reply": reply,
                 }, ensure_ascii=False)},
-            ])
-            return parse_consistency_verdict(response.text)
+            ], ConsistencyOutput)
+            return parse_consistency_verdict(response.parsed.model_dump_json() if response.parsed else response.raw)
         except Exception:
             logger.warning("Проверка согласованности недоступна, пропускаем", exc_info=True)
             return ConsistencyVerdict.ok()

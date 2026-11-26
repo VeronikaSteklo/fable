@@ -1,6 +1,7 @@
 import unittest
-from types import SimpleNamespace
 from unittest.mock import Mock
+
+from test_llm_summarizer import FakeModel
 
 from fable.application.prompts import SAFETY_POLICY, build_companion_prompt, build_system_prompt
 from fable.domain.companion import Companion
@@ -37,26 +38,19 @@ class CompanionAgentTests(unittest.TestCase):
         self.assertNotIn("update_companion", disabled)
 
     def test_voice_invokes_model_and_strips_text(self):
-        model = Mock()
-        model.invoke.return_value = SimpleNamespace(text='  «Осторожно!»  ')
+        model = FakeModel('  «Осторожно!»  ')
         voice = LLMCompanionVoice(model, self.setup)
         self.assertEqual(voice.speak(self.companion, self.profile, "Слышит шаги"), '«Осторожно!»')
-        messages = model.invoke.call_args.args[0]
+        messages = model.requests[0]
         self.assertEqual([m["role"] for m in messages], ["system", "user"])
         self.assertEqual(messages[1]["content"], "Слышит шаги")
         self.assertIn(self.profile.personality, messages[0]["content"])
 
     def test_voice_failure_and_empty_reply_are_neutral(self):
-        for model in [Mock(), Mock()]:
-            model.invoke.side_effect = RuntimeError("offline")
+        for model in [FakeModel(error=RuntimeError("offline")), FakeModel(" ")]:
             with self.assertLogs("fable.infrastructure.companion_agent", "WARNING"):
                 self.assertEqual(LLMCompanionVoice(model, self.setup).speak(
                     self.companion, self.profile, "Шаги"), "(Лис молчит.)")
-        model.invoke.side_effect = None
-        model.invoke.return_value = SimpleNamespace(text=" ")
-        with self.assertLogs("fable.infrastructure.companion_agent", "WARNING"):
-            self.assertEqual(LLMCompanionVoice(model, self.setup).speak(
-                self.companion, self.profile, "Шаги"), "(Лис молчит.)")
 
     def test_tools_ask_update_and_handle_unknown_or_absent_companion(self):
         voice = Mock()

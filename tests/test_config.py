@@ -17,6 +17,17 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.enable_thinking, ThinkingLevel.NONE)
         self.assertEqual(settings.temperature, 0.7)
         self.assertEqual(settings.history_limit, 16)
+        self.assertEqual(settings.llm_timeout_seconds, 120)
+        self.assertEqual(settings.llm_max_retries, 2)
+        self.assertEqual(settings.max_tool_rounds, 8)
+        self.assertEqual(settings.structured_output, 'json_schema')
+
+    def test_rejects_invalid_sdk_and_loop_settings(self):
+        for options in ({'llm_timeout_seconds': 0}, {'llm_timeout_seconds': -1},
+                        {'llm_max_retries': -1}, {'max_tool_rounds': -1},
+                        {'structured_output': 'unknown'}):
+            with self.subTest(options=options), self.assertRaises(ValidationError):
+                Settings(_env_file=None, api_key='fake', base_url='http://offline.invalid', model='test', **options)
 
     def test_environment_overrides_defaults(self) -> None:
         overrides = {

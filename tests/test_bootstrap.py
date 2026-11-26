@@ -35,7 +35,9 @@ class BootstrapTests(unittest.TestCase):
         config = settings(summary_model="summary", consistency_model="checker", summary_max_chars=123)
         setup = bootstrap.apply_setup_defaults(GameSetup("", "", Character("", "", "", "", "")), config)
         state = GameState()
-        with patch.object(bootstrap, "GameMasterAgent") as agent, patch.object(bootstrap, "ChatOpenAI") as model:
+        with patch.object(bootstrap, "GameMasterAgent") as agent, patch.object(bootstrap, "ChatModel") as model:
+            from test_llm_summarizer import FakeModel
+            model.return_value = FakeModel('{"consistent":true,"issues":[]}')
             agent.return_value.stream.return_value = iter(["Начало"])
             session = bootstrap.create_session(config, setup, state)
             self.assertEqual(session.start(), "Начало")
@@ -53,15 +55,15 @@ class BootstrapTests(unittest.TestCase):
         setup = GameSetup("Мир", "Завязка", Character("Герой", "Роль", "Цель", "Описание", "Жанр"))
         state = GameState()
         with patch.object(bootstrap, "GameMasterAgent") as agent, \
-                patch.object(bootstrap, "ChatOpenAI") as model, \
-                patch.object(bootstrap, "OpenAIEmbeddings") as embeddings, \
+                patch.object(bootstrap, "ChatModel") as model, \
+                patch.object(bootstrap, "create_embeddings") as embeddings, \
                 patch.object(bootstrap, "ChromaMemory") as memory:
             session = bootstrap.create_session(config, setup, state)
             self.assertIsNone(session._summarizer)
             self.assertIsNone(session._checker)
             model.assert_not_called()
-            self.assertEqual(embeddings.call_args.kwargs["model"], "embeddings")
-            self.assertEqual(embeddings.call_args.kwargs["base_url"], config.embedding_base_url)
+            self.assertEqual(embeddings.call_args.args[0].embedding_model, "embeddings")
+            self.assertEqual(embeddings.call_args.args[0].embedding_base_url, config.embedding_base_url)
             self.assertIs(memory.call_args.kwargs["setup"], setup)
             self.assertIs(agent.call_args.args[3], memory.return_value)
             self.assertIn("search_story_memories", agent.call_args.args[1])

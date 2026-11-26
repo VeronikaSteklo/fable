@@ -3,7 +3,6 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import ValidationError
 
 from fable.application.guardrails import CompositeGuardrail, RuleGuardrail
@@ -18,6 +17,8 @@ from fable.infrastructure.llm_consistency import LLMConsistencyChecker
 from fable.infrastructure.llm_moderator import LLMModerator
 from fable.infrastructure.llm_summarizer import LLMSummarizer
 from fable.infrastructure.master_agent import GameMasterAgent
+from fable.infrastructure.openai_client import ChatModel, build_client
+from fable.infrastructure.embeddings import create_embeddings
 
 
 def validate_settings(settings: Settings) -> None:
@@ -75,9 +76,9 @@ def create_guardrail(settings: Settings) -> CompositeGuardrail:
     return CompositeGuardrail(guardrails)
 
 
-def _model(settings: Settings, model: str | None, *, temperature: float = 0) -> ChatOpenAI:
-    return ChatOpenAI(model=model or settings.model, api_key=settings.api_key,
-                      base_url=settings.base_url, temperature=temperature)
+def _model(settings: Settings, model: str | None, *, temperature: float = 0) -> ChatModel:
+    return ChatModel(client=build_client(settings), model=model or settings.model,
+                     temperature=temperature, structured_output=settings.structured_output)
 
 
 def create_context_provider(setup: GameSetup, state: GameState) -> Callable[[], str]:
@@ -102,8 +103,7 @@ def create_session(settings: Settings, setup: GameSetup, state: GameState,
     if settings.embedding_model:
         memory = ChromaMemory(
             setup=setup,
-            embeddings=OpenAIEmbeddings(model=settings.embedding_model, api_key=settings.api_key,
-                                        base_url=settings.embedding_base_url or settings.base_url),
+            embeddings=create_embeddings(settings),
             persist_directory=settings.memory_store_path,
             search_limit=settings.memory_search_limit,
         )

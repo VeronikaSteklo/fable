@@ -1,6 +1,6 @@
 from enum import Enum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     base_url: str
     model: str
 
+    llm_timeout_seconds: Annotated[float, Field(gt=0)] = 120
+    llm_max_retries: Annotated[int, Field(ge=0)] = 2
+    max_tool_rounds: Annotated[int, Field(ge=0)] = 8
+    structured_output: Literal['json_schema', 'json_object', 'prompt'] = 'json_schema'
     enable_thinking: ThinkingLevel = ThinkingLevel.NONE
     temperature: Annotated[float, Field(ge=0, le=2)] = 0.7
     history_limit: Annotated[int, Field(ge=2)] = 16

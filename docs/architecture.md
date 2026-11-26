@@ -3,7 +3,7 @@
 Fable разделяет правила кампании, сценарии приложения и технические адаптеры.
 Это небольшой модульный монолит, а не набор микросервисов: границы ниже помогают
 объяснять ответственность кода, но не требуют отдельных процессов или баз данных.
-Домен не зависит от FastAPI, LangChain и файловой системы.
+Домен не зависит от FastAPI, OpenAI SDK, ChromaDB и файловой системы.
 
 ## Единый язык
 
@@ -100,12 +100,12 @@ API сохраняет прежние поля и добавляет:
 | Порт / граница | Реализация / адаптер |
 | --- | --- |
 | `GameRepository` (`application/ports.py`) | `JsonGameRepository` (`infrastructure/game_repository.py`) поверх `JsonSessionStore`: `get`, `add`, `save`, `delete`, `list_summaries` |
-| `StreamingAgent` (`application/ports.py`; переэкспорт в `session.py`) | `GameMasterAgent` (`infrastructure/master_agent.py`), LangChain/LangGraph и OpenAI-совместимый сервер |
-| `Guardrail` (`application/guardrails.py`) | `RuleGuardrail`, `CompositeGuardrail`, `LLMModerator` |
-| `Summarizer` (`application/summary.py`) | `LLMSummarizer` |
-| `ConsistencyChecker` (`application/consistency.py`) | `LLMConsistencyChecker` |
-| `CompanionVoice` (`application/companions.py`) | `LLMCompanionVoice` |
-| `StoryMemory` (`application/ports.py`; переэкспорт в `master_tools.py`) | `ChromaMemory` |
+| `StreamingAgent` (`application/ports.py`; переэкспорт в `session.py`) | `GameMasterAgent` (`infrastructure/master_agent.py`): собственный streaming tool-loop через OpenAI SDK; `PlainStreamingAgent` — baseline без tools |
+| `Guardrail` (`application/guardrails.py`) | `RuleGuardrail`, `CompositeGuardrail`, `LLMModerator` (OpenAI SDK + Pydantic JSON Schema) |
+| `Summarizer` (`application/summary.py`) | `LLMSummarizer` (OpenAI SDK, обычный текст) |
+| `ConsistencyChecker` (`application/consistency.py`) | `LLMConsistencyChecker` (OpenAI SDK + Pydantic JSON Schema) |
+| `CompanionVoice` (`application/companions.py`) | `LLMCompanionVoice` (OpenAI SDK, обычный текст) |
+| `StoryMemory` (`application/ports.py`; переэкспорт в `master_tools.py`) | `ChromaMemory`: прямой `chromadb.PersistentClient`, SDK embeddings, фильтр `campaign_id` |
 | `AuthStore` (`application/auth.py`) | `SqliteAuthStore` |
 | Фабрики репозитория и сессии, нормализация настроек, часы, генератор id | Внедряются в `GameService`; HTTP-композиция в `create_app`, создание LLM-компонентов в `bootstrap.py` |
 | Входной HTTP-адаптер | `presentation/web.py`: HTTP-модели, коды ошибок, сериализация SSE, auth и static mount |
@@ -119,6 +119,28 @@ API сохраняет прежние поля и добавляет:
 если профили спутников есть, но состояния ещё нет, оно инициализируется из профилей.
 Веб использует `SESSIONS_PATH/<user_id>`, CLI — корень. Проверки безопасного id и
 символических ссылок, атомарная запись остались в `JsonSessionStore`.
+
+## LLM-транспорт и инструменты
+
+`infrastructure/openai_client.py` — единственная фабрика `OpenAI(base_url, api_key,
+timeout, max_retries)`; `ChatModel` хранит идентификатор модели и параметры запроса.
+Мастер и static-baseline используют общий `thinking_extra_body`; вспомогательные роли
+сохраняют прежние температуры и не передают thinking-расширений.
+`structured_models.py` содержит схемы модерации, consistency, оценок и probes.
+`complete_structured` запрашивает строгий `response_format=json_schema`, при отказе
+сервера последовательно пробует `json_object` и инструкцию без response_format.
+`STRUCTURED_OUTPUT` задаёт начальный режим. Pydantic-валидация и прежние парсеры
+сохраняют fail-open игрового приложения, но не маскируют невалидные оценки в стенде.
+
+`tools.py` определяет минимальный `Tool`: имя, описание, JSON Schema из небольшой
+Pydantic-модели аргументов и обработчик. `master_tools.py` связывает их с доменом.
+Мастер собирает tool-call deltas по индексу (id, имя, фрагменты JSON), сохраняет
+assistant content и tool_calls в локальном контексте, последовательно исполняет
+вызовы и добавляет сообщения `role=tool`. Неизвестный tool, неверный JSON или
+ошибка валидации возвращают русское сообщение об ошибке, не обрывая ход.
+В публичный поток поступает только `delta.content`, никогда не результаты tools.
+После `MAX_TOOL_ROUNDS` раундов исполнения выполняется финальный запрос с
+`tool_choice="none"`. SDK-поток закрывается и при отмене генерации.
 
 ## Прикладной сервис
 

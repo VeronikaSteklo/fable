@@ -34,7 +34,7 @@ class CompanionWiringTests(unittest.TestCase):
                 config = settings(companion_model=companion_model, companion_temperature=1.1,
                                   summary_enabled=False, consistency_check_enabled=False)
                 state = GameState.for_setup(self.setup)
-                with patch.object(bootstrap, "ChatOpenAI") as model, patch.object(bootstrap, "GameMasterAgent") as master:
+                with patch.object(bootstrap, "ChatModel") as model, patch.object(bootstrap, "GameMasterAgent") as master:
                     bootstrap.create_session(config, self.setup, state)
                     self.assertEqual(model.call_args.kwargs["model"], expected)
                     self.assertEqual(model.call_args.kwargs["temperature"], 1.1)
@@ -46,7 +46,7 @@ class CompanionWiringTests(unittest.TestCase):
     def test_disabled_companions_keep_state_but_have_no_voice(self):
         config = settings(companions_enabled=False, summary_enabled=False, consistency_check_enabled=False)
         state = GameState.for_setup(self.setup)
-        with patch.object(bootstrap, "ChatOpenAI") as model, patch.object(bootstrap, "GameMasterAgent") as master:
+        with patch.object(bootstrap, "ChatModel") as model, patch.object(bootstrap, "GameMasterAgent") as master:
             bootstrap.create_session(config, self.setup, state)
             model.assert_not_called()
             self.assertIsNone(master.call_args.kwargs["companion_voice"])
@@ -78,14 +78,13 @@ class CompanionWiringTests(unittest.TestCase):
         self.assertEqual(old.setup.companions, ())
         self.assertEqual(old.state.companions, [])
 
-    @patch("fable.infrastructure.master_agent.create_agent")
-    @patch("fable.infrastructure.master_agent.ChatOpenAI")
-    def test_master_receives_tools_and_honors_disabled_setting(self, model, create_agent):
+    @patch("fable.infrastructure.master_agent.build_client")
+    def test_master_receives_tools_and_honors_disabled_setting(self, model):
         from fable.infrastructure.master_agent import GameMasterAgent
         voice = object()
         for enabled in [True, False]:
-            GameMasterAgent(settings(companions_enabled=enabled), "Промпт", GameState.for_setup(self.setup),
+            master = GameMasterAgent(settings(companions_enabled=enabled), "Промпт", GameState.for_setup(self.setup),
                             setup=self.setup, companion_voice=voice)
-            names = {tool.name for tool in create_agent.call_args.kwargs["tools"]}
+            names = {tool.name for tool in master._tools}
             self.assertEqual("ask_companion" in names, enabled)
             self.assertEqual("update_companion" in names, enabled)

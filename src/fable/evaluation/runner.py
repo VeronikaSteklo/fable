@@ -37,6 +37,8 @@ def run_experiments(scenarios, configs, models, settings, out: Path, *, judge=No
                     configurations=[asdict(c) for c in configs],
                     scenarios=[s.to_dict() for s in scenarios], skipped=skipped,
                     temperature=settings.temperature, enable_thinking=settings.enable_thinking.value,
+                    structured_output=settings.structured_output, max_tool_rounds=settings.max_tool_rounds,
+                    llm_timeout_seconds=settings.llm_timeout_seconds, llm_max_retries=settings.llm_max_retries,
                     companion_temperature=settings.companion_temperature,
                     summary_max_chars=settings.summary_max_chars,
                     embedding_model=settings.embedding_model, memory_search_limit=settings.memory_search_limit,

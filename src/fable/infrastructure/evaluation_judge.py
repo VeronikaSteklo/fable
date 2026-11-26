@@ -1,6 +1,9 @@
 """Auditable evaluation adapters: invalid structured output is never a success."""
 import json
 
+from fable.infrastructure.openai_client import ChatModel, complete_structured
+from fable.infrastructure.structured_models import ConsistencyOutput, JudgmentOutput, ProbeOutput
+
 from fable.domain.consistency import ConsistencyVerdict
 from fable.infrastructure.llm_consistency import CONSISTENCY_PROMPT
 
@@ -56,16 +59,17 @@ def parse_probe(raw: str) -> dict | None:
 
 class LLMJudge:
     """The composition root supplies a temperature-zero model."""
-    def __init__(self, model):
+    def __init__(self, model: ChatModel):
         self._model = model
 
     def _ask(self, prompt, payload, parser) -> dict:
         try:
-            raw = self._model.invoke([
+            response = complete_structured(self._model, [
                 {'role': 'system', 'content': prompt},
                 {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)},
-            ]).text
-            parsed = parser(raw)
+            ], JudgmentOutput if parser is parse_judgment else ProbeOutput)
+            raw = response.raw
+            parsed = parser(response.parsed.model_dump_json() if response.parsed else raw)
             return dict(valid=parsed is not None, raw=raw, error=None if parsed else 'Некорректный JSON',
                         **(parsed or {}))
         except Exception as error:
@@ -92,18 +96,19 @@ class LLMJudge:
 
 class ObservedConsistencyChecker:
     """Preserve normal fail-open gameplay, but expose parse/API failures to metrics."""
-    def __init__(self, model):
+    def __init__(self, model: ChatModel):
         self._model = model
         self.last = None
 
     def check(self, context: str, recent: list[dict], reply: str) -> ConsistencyVerdict:
         raw = ''
         try:
-            raw = self._model.invoke([
+            response = complete_structured(self._model, [
                 {'role': 'system', 'content': CONSISTENCY_PROMPT},
                 {'role': 'user', 'content': json.dumps(dict(context=context, recent=recent, reply=reply), ensure_ascii=False)},
-            ]).text
-            for data in _objects(raw):
+            ], ConsistencyOutput)
+            raw = response.raw
+            for data in _objects(response.parsed.model_dump_json() if response.parsed else raw):
                 if (type(data.get('consistent')) is bool and isinstance(data.get('issues'), list)
                         and all(isinstance(issue, str) for issue in data['issues'])):
                     self.last = dict(valid=True, consistent=data['consistent'], issues=data['issues'], raw=raw, error=None)

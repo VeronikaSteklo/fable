@@ -2,7 +2,8 @@ import json
 import logging
 import re
 
-from langchain_openai import ChatOpenAI
+from fable.infrastructure.openai_client import ChatModel, complete_structured
+from fable.infrastructure.structured_models import ModerationOutput
 
 from fable.domain.safety import RiskCategory, SafetyVerdict
 
@@ -25,18 +26,18 @@ MODERATOR_PROMPT = """Ты модератор текстовой ролевой 
 class LLMModerator:
     """Классификатор на LLM. При сбое пропускает текст: защиту тогда держат правила и промпт."""
 
-    def __init__(self, model: ChatOpenAI):
+    def __init__(self, model: ChatModel):
         self._model = model
 
     def check(self, text: str) -> SafetyVerdict:
         try:
-            reply = self._model.invoke(
+            reply = complete_structured(self._model,
                 [
                     {"role": "system", "content": MODERATOR_PROMPT},
                     {"role": "user", "content": text},
-                ]
+                ], ModerationOutput
             )
-            return parse_verdict(reply.text)
+            return parse_verdict(reply.parsed.model_dump_json() if reply.parsed else reply.raw)
         except Exception:
             logger.warning("Модератор недоступен, проверка пропущена", exc_info=True)
             return SafetyVerdict.allow()

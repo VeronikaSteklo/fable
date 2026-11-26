@@ -81,12 +81,10 @@ def create_runtime(settings, setup, config: Configuration, model: str, *, dry_ru
             from fable.infrastructure.companion_agent import LLMCompanionVoice
             memory = None
             if config.memory:
-                from langchain_openai import OpenAIEmbeddings
+                from fable.infrastructure.embeddings import create_embeddings
                 from fable.infrastructure.chroma_memory import ChromaMemory
                 memory = ChromaMemory(
-                    setup=setup, embeddings=OpenAIEmbeddings(
-                        model=configured.embedding_model, api_key=configured.api_key,
-                        base_url=configured.embedding_base_url or configured.base_url),
+                    setup=setup, embeddings=create_embeddings(configured),
                     persist_directory=configured.memory_store_path, search_limit=configured.memory_search_limit,
                 )
             voice = LLMCompanionVoice(_model(configured, model, temperature=configured.companion_temperature), setup) if config.companions and setup.companions else None

@@ -2,19 +2,30 @@ import unittest
 from types import SimpleNamespace
 
 from fable.infrastructure.llm_summarizer import LLMSummarizer
+from fable.infrastructure.openai_client import ChatModel
 
 
-class FakeModel:
+class FakeModel(ChatModel):
     def __init__(self, text="", error=None):
         self.text = text
         self.error = error
         self.requests = []
+        self.options = []
+        self.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=self._create)))
+        super().__init__(self.client, 'fake')
 
-    def invoke(self, messages):
-        self.requests.append(messages)
+    def _create(self, **kwargs):
+        self.requests.append(kwargs['messages'])
+        self.options.append(kwargs)
         if self.error:
             raise self.error
-        return SimpleNamespace(text=self.text)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=self.text))])
+
+    def create(self, messages, **kwargs):
+        return super().create(messages, **kwargs)
+
+    def complete(self, messages):
+        return super().complete(messages)
 
 
 class LLMSummarizerTests(unittest.TestCase):

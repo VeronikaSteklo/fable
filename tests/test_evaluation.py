@@ -3,6 +3,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from test_llm_summarizer import FakeModel
+
 
 class ConfigurationTests(unittest.TestCase):
     def test_presets_and_plain_agent(self):
@@ -28,13 +30,12 @@ class ConfigurationTests(unittest.TestCase):
         prompt = plain_prompt(setup)
         self.assertIn(setup.character.name, prompt)
         self.assertNotIn('read_game_state', prompt)
-        class Model:
-            def stream(self, messages):
-                self.messages = messages
-                yield type('Chunk', (), {'text': 'Ответ'})()
-        model = Model()
+        from test_master_agent import FakeClient, chunk
+        from fable.infrastructure.openai_client import ChatModel
+        client = FakeClient([chunk('Ответ', finish='stop')])
+        model = ChatModel(client, 'fake')
         self.assertEqual(list(PlainStreamingAgent(model, prompt).stream([{'role': 'user', 'content': 'ход'}])), ['Ответ'])
-        self.assertEqual(model.messages[0], {'role': 'system', 'content': prompt})
+        self.assertEqual(client.requests[0]['messages'][0], {'role': 'system', 'content': prompt})
 
 
     def test_plain_model_uses_same_generation_options(self):
@@ -43,12 +44,12 @@ class ConfigurationTests(unittest.TestCase):
         from fable.infrastructure.plain_agent import PlainStreamingAgent
         settings = Settings(_env_file=None, api_key='fake', base_url='http://offline.invalid', model='X',
                             enable_thinking='low', temperature=.3)
-        with patch('langchain_openai.ChatOpenAI') as model:
+        with patch('fable.infrastructure.plain_agent.ChatModel') as model, patch('fable.infrastructure.plain_agent.build_client'):
             PlainStreamingAgent.from_settings(settings, 'роль')
-        kwargs = model.call_args.kwargs
-        self.assertEqual(kwargs['temperature'], .3)
-        self.assertEqual(kwargs['extra_body']['reasoning_effort'], 'low')
-        self.assertTrue(kwargs['extra_body']['chat_template_kwargs']['enable_thinking'])
+        args = model.call_args.args
+        self.assertEqual(args[2], .3)
+        self.assertEqual(args[3]['reasoning_effort'], 'low')
+        self.assertTrue(args[3]['chat_template_kwargs']['enable_thinking'])
 
     def test_runtime_context_ablation_and_summary_trigger(self):
         from fable.config import Settings
@@ -88,32 +89,26 @@ class JudgeTests(unittest.TestCase):
     def test_judge_uses_only_later_replies_for_probes(self):
         from fable.infrastructure.evaluation_judge import LLMJudge, SCORE_KEYS
         from fable.evaluation.scenarios import load_scenarios
-        class Model:
-            def __init__(self):
-                self.calls = []
-            def invoke(self, messages):
-                self.calls.append(messages)
-                value = ({**dict.fromkeys(SCORE_KEYS, 3), 'justification': 'Проверено'} if len(self.calls) == 1
-                         else {'status': 'ignored', 'justification': 'Не упомянуто'})
-                return type('Reply', (), {'text': json.dumps(value)})()
+        class Model(FakeModel):
+            def _create(self, **kwargs):
+                self.text = json.dumps(({**dict.fromkeys(SCORE_KEYS, 3), 'justification': 'Проверено'}
+                                        if not self.requests else {'status': 'ignored', 'justification': 'Не упомянуто'}))
+                return super()._create(**kwargs)
         model = Model()
         scenario = next(s for s in load_scenarios(Path('eval/scenarios')) if s.id == 'long_recall')
         result = LLMJudge(model).evaluate(scenario, [dict(turn=2, reply='EARLY', model='HIDDEN', config='static'), dict(turn=18, reply='LATE')])
         self.assertTrue(result['valid'])
-        self.assertNotIn('HIDDEN', model.calls[0][1]['content'])
-        self.assertNotIn('static', model.calls[0][1]['content'])
-        payload = json.loads(model.calls[1][1]['content'])
+        self.assertNotIn('HIDDEN', model.requests[0][1]['content'])
+        self.assertNotIn('static', model.requests[0][1]['content'])
+        payload = json.loads(model.requests[1][1]['content'])
         self.assertEqual(payload['replies'], [{'turn': 18, 'reply': 'LATE'}])
         self.assertEqual(result['probes'][0]['status'], 'ignored')
 
     def test_judge_api_failure_and_unexposed_probe(self):
         from fable.infrastructure.evaluation_judge import LLMJudge
         from fable.evaluation.scenarios import load_scenarios
-        class Model:
-            def invoke(self, messages):
-                raise RuntimeError('судья недоступен')
         scenario = load_scenarios(Path('eval/scenarios'))[0]
-        judge = LLMJudge(Model())
+        judge = LLMJudge(FakeModel(error=RuntimeError('судья недоступен')))
         result = judge.evaluate(scenario, [dict(turn=0, reply='начало')])
         self.assertFalse(result['valid'])
         self.assertIn('недоступен', result['error'])
@@ -124,10 +119,7 @@ class JudgeTests(unittest.TestCase):
 
     def test_consistency_invalid_json_is_not_silently_valid(self):
         from fable.infrastructure.evaluation_judge import ObservedConsistencyChecker
-        class Model:
-            def invoke(self, messages):
-                return type('Reply', (), {'text': 'garbage'})()
-        checker = ObservedConsistencyChecker(Model())
+        checker = ObservedConsistencyChecker(FakeModel('garbage'))
         checker.check('', [], 'ответ')
         self.assertFalse(checker.last['valid'])
         self.assertIsNone(checker.last['consistent'])
@@ -253,6 +245,10 @@ class CLITests(unittest.TestCase):
             manifest = json.loads(Path(directory, 'manifest.json').read_text())
             self.assertEqual(manifest['configurations'][1]['history_limit'], 4)
             self.assertTrue(manifest['dry_run'])
+            self.assertEqual(manifest['structured_output'], 'json_schema')
+            self.assertEqual(manifest['max_tool_rounds'], 8)
+            self.assertEqual(manifest['llm_timeout_seconds'], 120)
+            self.assertEqual(manifest['llm_max_retries'], 2)
             self.assertIn('ОФЛАЙН-ДЕМО', Path(directory, 'summary.md').read_text())
 
     def test_invalid_options_are_rejected(self):
