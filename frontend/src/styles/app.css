@@ -45,6 +45,9 @@ legend { margin-bottom: .75rem; padding: 0; font-family: var(--font-story); font
 .story-entry { max-width: 41rem; }
 .story-entry p { margin: .5rem 0 0; white-space: pre-wrap; }
 .story-entry.master p { font-family: var(--font-story); font-size: 1.2rem; line-height: 1.8; }
+.turn-usage { margin-top: .7rem; color: var(--color-muted); }
+.turn-usage summary { cursor: pointer; font-size: .72rem; }
+.story-entry.master .turn-usage p { font-family: var(--font-ui); font-size: .76rem; line-height: 1.5; }
 .story-entry.player { justify-self: end; width: min(90%, 32rem); padding: .9rem 1rem; border-radius: var(--radius); background: var(--color-player); }
 .story-entry.player p { margin-top: .25rem; }
 .composer { position: fixed; bottom: 0; left: 0; right: 0; padding: 1rem max(1rem, calc((100% - var(--content-width)) / 2)); display: grid; grid-template-columns: 1fr auto; gap: .45rem .7rem; border-top: 1px solid var(--color-border); background: var(--color-bg); }

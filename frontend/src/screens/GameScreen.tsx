@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { getGame, sendAction, startGame } from '../api';
+import { normalizeUsage, sumUsage, usageLabel } from '../usage.ts';
 import type { DomainEvent, Game, StoryEntry, StreamHandlers } from '../types';
 
 type Props = { gameId: string; onExit: () => void };
@@ -26,7 +27,7 @@ function eventMarker(event: DomainEvent): string {
 function storyEntries(game: Game): StoryEntry[] {
   return game.entries.map((entry, index) => ({
     id: `saved-${index}`, kind: entry.role === 'user' ? 'player' : 'master',
-    text: entry.content, consistency: entry.consistency, events: entry.events ?? [],
+    text: entry.content, consistency: entry.consistency, events: entry.events ?? [], usage: normalizeUsage(entry.usage),
   }));
 }
 
@@ -72,10 +73,11 @@ export default function GameScreen({ gameId, onExit }: Props) {
       },
       onDone(result) {
         if (signal.aborted) return;
-        setEntries((saved) => saved.map((entry) => entry.id === masterId ? { ...entry, consistency: result.consistency, events: result.events ?? [] } : entry));
+        setEntries((saved) => saved.map((entry) => entry.id === masterId ? { ...entry, consistency: result.consistency, events: result.events ?? [], usage: normalizeUsage(result.usage) } : entry));
         setGame({ ...current, started: true, state: result.state, summary: result.summary,
+          usage_total: sumUsage([...current.entries.filter(e => e.role === 'assistant').map(e => normalizeUsage(e.usage)), normalizeUsage(result.usage)]),
           entries: [...current.entries, ...(action ? [{ role: 'user' as const, content: action }] : []),
-            { role: 'assistant', content: text, consistency: result.consistency, events: result.events ?? [] }],
+            { role: 'assistant', content: text, consistency: result.consistency, events: result.events ?? [], usage: normalizeUsage(result.usage) }],
         });
       },
       onBlocked(message) {
@@ -182,12 +184,17 @@ export default function GameScreen({ gameId, onExit }: Props) {
               })}
             </ul>
           </div>}
+          {entry.kind === 'master' && entry.usage && !entry.incomplete && <details className="turn-usage">
+            <summary className="muted">Расход хода</summary>
+            <p className="muted">{usageLabel(entry.usage)}</p>
+          </details>}
         </article>)}
         {busy && <p className="muted" role="status">{game ? 'Рассказчик пишет…' : 'Загружаем историю…'}</p>}
         {notice && <p className="notice" role="status">{notice}</p>}
         {error && <div className="notice error-notice" role="alert"><p>{error}</p><button type="button" className="text-button" onClick={retryRequest} disabled={busy}>Повторить</button></div>}
         {game && <details className="game-state">
           <summary>Мир и краткое содержание</summary>
+          <h2>Расход</h2><p className="muted">{usageLabel(normalizeUsage(game.usage_total) ?? sumUsage([]))}</p>
           <h2>Место</h2><p>{game.state.location || 'Пока неизвестно'}</p>
           <h2>Инвентарь</h2>{game.state.inventory.length ? <ul>{game.state.inventory.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p>Пока пусто</p>}
           <h2>Известные факты</h2>{game.state.facts.length ? <ul>{game.state.facts.map((fact, index) => <li key={index}>{fact}</li>)}</ul> : <p>Пока нет</p>}

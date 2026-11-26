@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { sumUsage } from '../src/usage.ts';
 import { createGame, listGames, getGame, deleteGame, startGame, sendAction, ApiError } from '../src/api.ts';
 const originalFetch = globalThis.fetch;
 const setup = { world: '', story: '', companions: [], character: { name: '', role: '', goal: '', description: '', genre: '' } };
@@ -12,7 +13,7 @@ function mock(body, status = 200) {
 }
 try {
   mock(game, 201);
-  assert.deepEqual(await createGame(setup), game);
+  assert.deepEqual(await createGame(setup), { ...game, usage_total: sumUsage([]) });
   assert.deepEqual(JSON.parse(calls.at(-1)[1].body), setup);
   mock([ { id: 'test', title: 'Story', turns: 0, updated_at: '' } ]);
   assert.equal((await listGames())[0].id, 'test');
@@ -24,7 +25,7 @@ try {
   assert.equal(calls.at(-1)[1].method, 'DELETE');
   mock({ detail: 'Нельзя' }, 422);
   await assert.rejects(createGame(setup), (error) => error instanceof ApiError && error.status === 422 && error.message === 'Нельзя');
-  const result = { consistency: { consistent: false, issues: ['test'] }, state: game.state, summary: 'summary', events: [] };
+  const result = { consistency: { consistent: false, issues: ['test'] }, state: game.state, summary: 'summary', events: [], usage: null };
   async function run(wire, action = false) {
     const events = [];
     const controller = new AbortController();

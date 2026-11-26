@@ -1,3 +1,4 @@
+import { normalizeUsage, sumUsage } from './usage.ts';
 import type { Game, GameListItem, GameSetup, GameState, StreamHandlers, StreamResult, User } from './types.ts';
 
 export class ApiError extends Error {
@@ -52,7 +53,8 @@ export async function me(signal?: AbortSignal): Promise<User> {
 const normalizeState = (state: GameState): GameState => ({ ...state, companions: state.companions ?? [] });
 const normalizeGame = (game: Game): Game => ({
   ...game, setup: { ...game.setup, companions: game.setup.companions ?? [] }, state: normalizeState(game.state),
-  entries: game.entries.map((entry) => ({ ...entry, events: entry.events ?? [] })),
+  entries: game.entries.map((entry) => ({ ...entry, events: entry.events ?? [], usage: normalizeUsage(entry.usage) })),
+  usage_total: normalizeUsage(game.usage_total) ?? sumUsage(game.entries.filter(e => e.role === 'assistant').map(e => normalizeUsage(e.usage))),
 });
 
 export async function createGame(setup: GameSetup, signal?: AbortSignal): Promise<Game> {
@@ -112,7 +114,7 @@ async function stream(path: string, init: RequestInit, handlers: StreamHandlers)
         handlers.onChunk(data.text);
       } else {
         terminal = true;
-        if (event === 'done') handlers.onDone({ ...(data as StreamResult), state: normalizeState(data.state), events: data.events ?? [] });
+        if (event === 'done') handlers.onDone({ ...(data as StreamResult), state: normalizeState(data.state), events: data.events ?? [], usage: normalizeUsage(data.usage) });
         else if (event === 'blocked') handlers.onBlocked(data.message || 'Действие отклонено.');
         else handlers.onError(data.message || 'Не удалось продолжить историю.');
       }

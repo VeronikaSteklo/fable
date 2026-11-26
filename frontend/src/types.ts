@@ -52,11 +52,23 @@ export interface DomainEvent {
   delta?: number;
 }
 
+export interface Usage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  llm_calls: number;
+  estimated: boolean;
+  cost_usd: number | null;
+  duration_ms: number;
+  by_role: Record<string, { prompt_tokens: number; completion_tokens: number; total_tokens: number; calls: number }>;
+}
+
 export interface GameEntry {
   role: 'user' | 'assistant';
   content: string;
   consistency?: Consistency | null;
   events?: DomainEvent[];
+  usage?: Usage | null;
 }
 
 export interface Game {
@@ -64,6 +76,7 @@ export interface Game {
   setup: GameSetup;
   started: boolean;
   entries: GameEntry[];
+  usage_total?: Usage;
   state: GameState;
   summary: string;
 }
@@ -76,6 +89,7 @@ export interface GameListItem {
 }
 
 export interface StreamResult {
+  usage?: Usage | null;
   events: DomainEvent[];
   consistency: Consistency | null;
   state: GameState;
@@ -95,6 +109,7 @@ export interface StoryEntry {
   text: string;
   consistency?: Consistency | null;
   events?: DomainEvent[];
+  usage?: Usage | null;
   rejected?: boolean;
   incomplete?: boolean;
 }
