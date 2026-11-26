@@ -1,15 +1,17 @@
 from dataclasses import replace
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from fable.application.guardrails import BLOCK_MESSAGE
-from fable.application.persistence import build_game_record, parse_game_record
+from fable.application.ports import GameRepository, StoredGame
 from fable.bootstrap import (apply_setup_defaults, create_guardrail, create_session,
                              load_settings, setup_text)
 from fable.config import Settings
 from fable.domain.companion import Companion, InvalidSetupError
+from fable.domain.game import Game
 from fable.domain.models import Character, GameSetup
 from fable.domain.safety import ContentBlockedError
-from fable.domain.state import GameState
+from fable.infrastructure.game_repository import JsonGameRepository
 from fable.infrastructure.session_store import JsonSessionStore
 
 
@@ -57,8 +59,8 @@ def _create_game_setup(settings: Settings) -> GameSetup:
     return setup
 
 
-def _choose_saved_game(store: JsonSessionStore) -> str | None:
-    recent = store.list()[:5]
+def _choose_saved_game(repository: GameRepository) -> str | None:
+    recent = repository.list_summaries()[:5]
     if not recent:
         return None
     print("=== Сохранённые игры ===")
@@ -81,16 +83,15 @@ def main() -> None:
         return
 
     try:
-        store = JsonSessionStore(settings.sessions_path)
-        game_id = _choose_saved_game(store)
-        created_at = None
+        repository = JsonGameRepository(JsonSessionStore(settings.sessions_path))
+        game_id = _choose_saved_game(repository)
         if game_id is not None:
-            record = store.load(game_id)
-            if record is None:
+            stored = repository.get(game_id)
+            if stored is None:
                 raise ValueError("Сохранённая игра не найдена")
-            parsed = parse_game_record(record)
-            setup, game_state, created_at = parsed.setup, parsed.state, parsed.created_at
-            session = create_session(settings, setup, game_state, parsed.session)
+            game = stored.game
+            setup, game_state = game.setup, game.state
+            session = create_session(settings, setup, game_state, stored.session)
         else:
             guardrail = create_guardrail(settings)
             while True:
@@ -99,11 +100,10 @@ def main() -> None:
                     break
                 print(BLOCK_MESSAGE + " Измени описание мира или героя.\n")
             game_id = uuid4().hex
-            game_state = GameState.for_setup(setup)
+            game = Game.create(game_id, None, setup, datetime.now(timezone.utc).isoformat())
+            game_state = game.state
             session = create_session(settings, setup, game_state)
-            record = build_game_record(game_id, setup, game_state, session)
-            store.save(game_id, record)
-            created_at = record["created_at"]
+            repository.add(StoredGame(game, session.to_snapshot()))
     except (EOFError, KeyboardInterrupt):
         return
     except Exception as error:
@@ -111,9 +111,9 @@ def main() -> None:
         return
 
     def save():
-        store.save(game_id, build_game_record(
-            game_id, setup, game_state, session, created_at=created_at,
-        ))
+        session.attach_events([event.to_dict() for event in game.pull_events()])
+        game.updated_at = datetime.now(timezone.utc).isoformat()
+        repository.save(StoredGame(game, session.to_snapshot()))
 
     print("Квест начался. Пиши 'выход' для выхода.\n")
     if session.started:

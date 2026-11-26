@@ -52,6 +52,7 @@ export async function me(signal?: AbortSignal): Promise<User> {
 const normalizeState = (state: GameState): GameState => ({ ...state, companions: state.companions ?? [] });
 const normalizeGame = (game: Game): Game => ({
   ...game, setup: { ...game.setup, companions: game.setup.companions ?? [] }, state: normalizeState(game.state),
+  entries: game.entries.map((entry) => ({ ...entry, events: entry.events ?? [] })),
 });
 
 export async function createGame(setup: GameSetup, signal?: AbortSignal): Promise<Game> {
@@ -111,7 +112,7 @@ async function stream(path: string, init: RequestInit, handlers: StreamHandlers)
         handlers.onChunk(data.text);
       } else {
         terminal = true;
-        if (event === 'done') handlers.onDone({ ...(data as StreamResult), state: normalizeState(data.state) });
+        if (event === 'done') handlers.onDone({ ...(data as StreamResult), state: normalizeState(data.state), events: data.events ?? [] });
         else if (event === 'blocked') handlers.onBlocked(data.message || 'Действие отклонено.');
         else handlers.onError(data.message || 'Не удалось продолжить историю.');
       }

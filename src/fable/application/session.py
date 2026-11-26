@@ -1,8 +1,8 @@
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from copy import deepcopy
-from typing import Protocol
 
+from fable.application.ports import StreamingAgent as StreamingAgent
 from fable.application.consistency import ConsistencyChecker
 from fable.application.guardrails import Guardrail
 from fable.application.prompts import build_start_prompt
@@ -11,10 +11,6 @@ from fable.domain.consistency import ConsistencyVerdict
 from fable.domain.safety import ContentBlockedError
 
 logger = logging.getLogger(__name__)
-
-
-class StreamingAgent(Protocol):
-    def stream(self, messages: list[dict]) -> Iterator[str]: ...
 
 
 class GameSession:
@@ -45,14 +41,14 @@ class GameSession:
     def start(self) -> str:
         return "".join(self.start_stream())
 
-    def start_stream(self) -> Iterator[str]:
+    def start_stream(self) -> Generator[str, None, None]:
         reply = yield from self._stream_reply()
         self._record_reply(reply)
 
     def send_action(self, action: str) -> str:
         return "".join(self.send_action_stream(action))
 
-    def send_action_stream(self, action: str) -> Iterator[str]:
+    def send_action_stream(self, action: str) -> Generator[str, None, None]:
         if self._guardrail is not None:
             verdict = self._guardrail.check(action)
             if not verdict.allowed:
@@ -68,7 +64,7 @@ class GameSession:
         self._record_reply(reply)
         return
 
-    def _stream_reply(self) -> Iterator[str]:
+    def _stream_reply(self) -> Generator[str, None, str]:
         chunks: list[str] = []
         messages = self._messages_for_request()
         for chunk in self._agent.stream(messages):
@@ -100,6 +96,13 @@ class GameSession:
                     + ". Учти и исправь в продолжении, не упоминая проверку."
                 )
         self._history.append(entry)
+
+    def attach_events(self, events: list[dict]) -> None:
+        """Enrich only the completed assistant reply, never model input messages."""
+        if events:
+            if not self._history or self._history[-1]["role"] != "assistant":
+                raise ValueError("Нет завершённого ответа для доменных событий")
+            self._history[-1]["events"] = deepcopy(events)
 
     @property
     def started(self) -> bool:

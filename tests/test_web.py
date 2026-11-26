@@ -153,10 +153,18 @@ class WebTests(unittest.TestCase):
         self.assertEqual(parsed[:2], [("chunk", {"text": "Привет\n"}), ("chunk", {"text": "мир"})])
         self.assertEqual(parsed[-1], ("done", {"consistency": {"consistent": False, "issues": ["Проверь сцену"]},
                                               "state": {"location": "Башня", "inventory": [], "facts": ["Сцена началась"], "companions": []},
-                                              "summary": ""}))
+                                              "summary": "", "events": [
+                                                  {"type": "location_changed", "text": "Локация: Башня", "location": "Башня"},
+                                                  {"type": "fact_established", "text": "Установлен факт: Сцена началась", "fact": "Сцена началась"},
+                                              ]}))
         self.assertIn("Привет", response.text)
         self.assertEqual(self.client.post(path + "/start").status_code, 409)
-        self.assertEqual(len(self.client.get(path).json()["entries"]), 1)
+        entries = self.client.get(path).json()["entries"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["events"], parsed[-1][1]["events"])
+        next_done = events(self.client.post(path + "/actions", json={"action": "Жду"}))[-1][1]
+        self.assertEqual(next_done["events"], [])
+        self.assertNotIn("events", self.client.get(path).json()["entries"][-1])
 
     def test_actions_persist_and_restore_with_summary(self):
         game = self.create()
@@ -195,7 +203,7 @@ class WebTests(unittest.TestCase):
         before = self.client.get(path).json()
         disk = self.store.load(game["id"])
         self.factory.fail = True
-        with self.assertLogs("fable.presentation.web", "ERROR"):
+        with self.assertLogs("fable.application.game_service", "ERROR"):
             parsed = events(self.client.post(path + "/actions", json={"action": "Жду"}))
         self.assertEqual([event for event, _ in parsed], ["chunk", "error"])
         self.assertEqual(self.client.get(path).json(), before)
@@ -207,7 +215,7 @@ class WebTests(unittest.TestCase):
         game = self.create()
         path = f'/api/games/{game["id"]}'
         self.factory.fail = True
-        with self.assertLogs("fable.presentation.web", "ERROR"):
+        with self.assertLogs("fable.application.game_service", "ERROR"):
             self.assertEqual(events(self.client.post(path + "/start"))[-1][0], "error")
         self.assertEqual(self.client.get(path).json(), game)
         self.factory.fail = False
@@ -225,6 +233,7 @@ class WebTests(unittest.TestCase):
             game = client.post("/api/games", json=EMPTY_SETUP).json()
             done = events(client.post(f'/api/games/{game["id"]}/start'))[-1]
             self.assertIsNone(done[1]["consistency"])
+            self.assertEqual(done[1]["events"], [])
             self.assertNotIn("consistency", client.get(f'/api/games/{game["id"]}').json()["entries"][0])
 
     def test_busy_game_rejects_parallel_stream_and_delete(self):

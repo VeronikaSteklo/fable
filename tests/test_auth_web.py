@@ -183,7 +183,7 @@ class AuthWebTests(unittest.TestCase):
         with TestClient(app) as alice, TestClient(app) as bob:
             alice_id = self.register(alice).json()["user"]["id"]
             bob_id = self.register(bob, "Bobby").json()["user"]["id"]
-            with patch("fable.presentation.web.uuid4", return_value=UUID(int=1)):
+            with patch("fable.application.game_service.uuid4", return_value=UUID(int=1)):
                 first = alice.post("/api/games", json=EMPTY_SETUP).json()
                 second = bob.post("/api/games", json={**EMPTY_SETUP, "world": "Мир Боба"}).json()
             self.assertEqual(first["id"], second["id"])
