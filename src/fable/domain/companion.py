@@ -1,6 +1,9 @@
 """Companion profiles and their evolving relationship with the hero."""
 from dataclasses import asdict, dataclass, field
 
+from fable.domain.events import (DomainEvent, CompanionAttitudeChanged, CompanionLearned,
+                                 CompanionLeft, CompanionReturned)
+
 
 class InvalidSetupError(ValueError):
     """Настройки игры нарушают правила создания спутников."""
@@ -50,23 +53,37 @@ class CompanionState:
     attitude: Attitude = field(default_factory=Attitude)
     present: bool = True
     notes: list[str] = field(default_factory=list)
+    _events: list[DomainEvent] = field(default_factory=list, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         notes, self.notes = self.notes, []
         for note in notes:
             self.remember(note)
+        self._events.clear()  # Rehydration is not a change in the story.
 
     def change_attitude(self, delta: int) -> None:
+        previous = self.attitude.value
         self.attitude = self.attitude.changed(max(-25, min(25, delta)))
+        if self.attitude.value != previous:
+            self._events.append(CompanionAttitudeChanged(
+                self.name, self.attitude.value - previous, self.attitude.value, self.attitude.label,
+            ))
 
     def remember(self, note: str) -> None:
         note = note.strip()
         if note and note.casefold() not in {entry.casefold() for entry in self.notes}:
             self.notes.append(note)
             self.notes = self.notes[-20:]
+            self._events.append(CompanionLearned(self.name, note))
 
     def set_present(self, present: bool) -> None:
-        self.present = present
+        if self.present != present:
+            self.present = present
+            self._events.append(CompanionReturned(self.name) if present else CompanionLeft(self.name))
+
+    def pull_events(self) -> list[DomainEvent]:
+        events, self._events = self._events, []
+        return events
 
     def to_dict(self) -> dict:
         return dict(name=self.name, role=self.role, attitude=self.attitude.value,
