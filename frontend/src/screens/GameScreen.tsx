@@ -165,6 +165,21 @@ export default function GameScreen({ gameId, onExit }: Props) {
           <h2>Место</h2><p>{game.state.location || 'Пока неизвестно'}</p>
           <h2>Инвентарь</h2>{game.state.inventory.length ? <ul>{game.state.inventory.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p>Пока пусто</p>}
           <h2>Известные факты</h2>{game.state.facts.length ? <ul>{game.state.facts.map((fact, index) => <li key={index}>{fact}</li>)}</ul> : <p>Пока нет</p>}
+          {!!game.state.companions?.length && <section className="companions-panel" aria-labelledby="companions-title">
+            <h2 id="companions-title">Спутники</h2>
+            {game.state.companions.map((companion) => {
+              const attitude = Math.max(-100, Math.min(100, companion.attitude));
+              return <article className="companion-card" key={companion.name.toLowerCase()}>
+                <div className="companion-heading"><h3>{companion.name}</h3>{!companion.present && <span className="companion-absent">не рядом</span>}</div>
+                {companion.role && <p className="muted companion-role">{companion.role}</p>}
+                <p className="companion-attitude">{companion.attitude_label}</p>
+                <div className="attitude-meter" role="meter" aria-valuemin={-100} aria-valuemax={100} aria-valuenow={attitude} aria-valuetext={companion.attitude_label} aria-label={`Отношение: ${companion.name}`}>
+                  <span className={`attitude-fill ${attitude < 0 ? 'negative' : attitude > 0 ? 'positive' : 'neutral'}`} style={{ left: `${attitude < 0 ? 50 + attitude / 2 : 50}%`, width: `${Math.abs(attitude) / 2}%` }} />
+                </div>
+                {!!companion.notes.length && <details className="companion-notes"><summary>Что помнит</summary><ul>{companion.notes.slice(-5).map((note, index) => <li key={index}>{note}</li>)}</ul></details>}
+              </article>;
+            })}
+          </section>}
           <h2>Краткое содержание</h2><p>{game.summary || 'История только начинается.'}</p>
         </details>}
         <div ref={bottom} />

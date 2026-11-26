@@ -1,9 +1,12 @@
 from collections.abc import Iterator
 
 from langchain.agents import create_agent
+from langchain_core.messages import AIMessageChunk
 from langchain_openai import ChatOpenAI
 
+from fable.application.companions import CompanionVoice
 from fable.config import Settings, ThinkingLevel
+from fable.domain.models import GameSetup
 from fable.domain.state import GameState
 from fable.infrastructure.chroma_memory import ChromaMemory
 from fable.infrastructure.master_tools import create_master_tools
@@ -16,7 +19,10 @@ class GameMasterAgent:
         system_prompt: str,
         game_state: GameState,
         memory: ChromaMemory | None = None,
-    ):
+        *,
+        setup: GameSetup | None = None,
+        companion_voice: CompanionVoice | None = None,
+    ) -> None:
         extra_body: dict[str, object] = {
             "chat_template_kwargs": {
                 "enable_thinking": settings.enable_thinking is not ThinkingLevel.NONE
@@ -34,7 +40,10 @@ class GameMasterAgent:
         )
         self._agent = create_agent(
             model=model,
-            tools=create_master_tools(game_state, memory),
+            tools=create_master_tools(
+                game_state, memory, setup=setup,
+                companion_voice=companion_voice if settings.companions_enabled else None,
+            ),
             system_prompt=system_prompt,
         )
 
@@ -48,7 +57,9 @@ class GameMasterAgent:
             if event["type"] != "messages":
                 continue
 
-            message_chunk = event["data"][0]
+            message_chunk, metadata = event["data"]
+            if metadata.get("langgraph_node") != "model" or not isinstance(message_chunk, AIMessageChunk):
+                continue
             text = message_chunk.text
             if text:
                 yield text

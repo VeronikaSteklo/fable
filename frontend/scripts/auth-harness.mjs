@@ -14,6 +14,11 @@ const react = {
     return [h.slots[i], (next) => { h.slots[i] = typeof next === 'function' ? next(h.slots[i]) : next; }];
   },
   useRef(value) { const h = host; const i = h.cursor++; return h.slots[i] ??= { current: value }; },
+  useCallback(fn, deps) {
+    const h = host; const i = h.cursor++; const previous = h.slots[i];
+    if (!previous || deps.some((value, j) => value !== previous.deps[j])) h.slots[i] = { deps, fn };
+    return h.slots[i].fn;
+  },
   useEffect(fn, deps) {
     const h = host; const i = h.cursor++; const previous = h.slots[i];
     if (!previous || deps.some((value, j) => value !== previous.deps[j])) {

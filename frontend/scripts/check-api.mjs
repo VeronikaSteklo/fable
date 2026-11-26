@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { createGame, listGames, getGame, deleteGame, startGame, sendAction, ApiError } from '../src/api.ts';
 const originalFetch = globalThis.fetch;
-const setup = { world: '', story: '', character: { name: '', role: '', goal: '', description: '', genre: '' } };
-const game = { id: 'test', setup, started: false, entries: [], state: { location: '', inventory: [], facts: [] }, summary: '' };
+const setup = { world: '', story: '', companions: [], character: { name: '', role: '', goal: '', description: '', genre: '' } };
+const game = { id: 'test', setup, started: false, entries: [], state: { location: '', inventory: [], facts: [], companions: [] }, summary: '' };
 let calls = [];
 function mock(body, status = 200) {
   globalThis.fetch = async (url, init) => {

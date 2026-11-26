@@ -1,5 +1,5 @@
 """Local HTTP API and streamed game replies for the React client."""
-from collections.abc import Callable, Generator
+from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass, field
 import json
 import logging
@@ -10,11 +10,12 @@ from uuid import uuid4
 from typing import cast
 
 import anyio
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, StrictStr
+from pydantic import BaseModel, Field, StrictStr
 from starlette.concurrency import run_in_threadpool
 import uvicorn
 
@@ -25,6 +26,7 @@ from fable.application.session import GameSession
 from fable.bootstrap import (apply_setup_defaults, create_guardrail, create_session,
                              load_settings, setup_text, validate_settings)
 from fable.config import Settings
+from fable.domain.companion import InvalidSetupError
 from fable.domain.models import GameSetup
 from fable.domain.safety import ContentBlockedError
 from fable.domain.state import GameState
@@ -45,10 +47,17 @@ class CharacterBody(BaseModel):
     genre: StrictStr
 
 
+class CompanionBody(BaseModel):
+    name: StrictStr
+    role: StrictStr
+    personality: StrictStr
+
+
 class SetupBody(BaseModel):
     world: StrictStr
     story: StrictStr
     character: CharacterBody
+    companions: list[CompanionBody] = Field(default_factory=list)
 
 
 class ActionBody(BaseModel):
@@ -122,6 +131,17 @@ def create_app(settings: Settings | None = None, *, session_factory: SessionFact
                        session_ttl_days=config.session_ttl_days,
                        allow_registration=config.allow_registration)
     current_user = configure_auth(app, config, auth)
+    default_validation_handler = cast(Callable[[Request, RequestValidationError], Awaitable[Response]],
+                                      app.exception_handlers[RequestValidationError])
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_body(request: Request, error: RequestValidationError):
+        if any(tuple(item["loc"][:2]) == ("body", "companions") for item in error.errors()):
+            return JSONResponse(status_code=422, content={
+                "detail": "Спутники должны быть списком профилей со строковыми полями: имя, роль и характер.",
+            })
+        return await default_validation_handler(request, error)
+
     app.add_middleware(OriginCheckMiddleware)
     app.add_middleware(CORSMiddleware, allow_origins=DEV_ORIGINS, allow_credentials=True,
                        allow_methods=["GET", "POST", "DELETE"], allow_headers=["*"])
@@ -157,10 +177,13 @@ def create_app(settings: Settings | None = None, *, session_factory: SessionFact
     @app.post("/api/games", status_code=201)
     def create_game(body: SetupBody, user: User = Depends(current_user)):
         sessions = user_store(user.id)
-        setup = apply_setup_defaults(GameSetup.from_dict(body.model_dump()), config)
+        try:
+            setup = apply_setup_defaults(GameSetup.from_dict(body.model_dump()), config)
+        except InvalidSetupError as error:
+            raise HTTPException(422, str(error)) from error
         if not guardrail.check(setup_text(setup)).allowed:
             raise HTTPException(422, BLOCK_MESSAGE + " Измени описание мира или героя.")
-        state = GameState()
+        state = GameState.for_setup(setup)
         session = factory(config, setup, state, None)
         game_id = uuid4().hex
         record = build_game_record(game_id, setup, state, session)
@@ -255,6 +278,7 @@ def create_app(settings: Settings | None = None, *, session_factory: SessionFact
                         game.state.location = restored.location
                         game.state.inventory = restored.inventory
                         game.state.facts = restored.facts
+                        game.state.companions = restored.companions
                         game.session = factory(config, game.setup, game.state, before)
                 finally:
                     release()

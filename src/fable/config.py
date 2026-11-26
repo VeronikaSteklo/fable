@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     default_character_role: str = "странник"
     default_character_goal: str = "раскрыть тайну"
     default_genre: str = "фэнтези"
+    companion_model: str | None = None
+    companion_temperature: Annotated[float, Field(ge=0, le=2)] = 0.8
+    companions_enabled: bool = True
     summary_enabled: bool = True
     summary_max_chars: Annotated[int, Field(ge=1)] = 2000
     summary_model: str | None = None

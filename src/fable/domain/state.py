@@ -1,11 +1,23 @@
 from dataclasses import dataclass, field
 
+from fable.domain.companion import CompanionState
+from fable.domain.models import GameSetup
+
 
 @dataclass
 class GameState:
     location: str | None = None
     inventory: list[str] = field(default_factory=list)
     facts: list[str] = field(default_factory=list)
+    companions: list[CompanionState] = field(default_factory=list)
+
+    @classmethod
+    def for_setup(cls, setup: GameSetup) -> "GameState":
+        return cls(companions=[CompanionState(item.name, item.role) for item in setup.companions])
+
+    def companion(self, name: str) -> CompanionState | None:
+        return next((item for item in self.companions
+                     if item.name.casefold() == name.strip().casefold()), None)
 
     def update(
         self,
@@ -41,13 +53,15 @@ class GameState:
             "location": self.location,
             "inventory": list(self.inventory),
             "facts": list(self.facts),
+            "companions": [item.to_dict() for item in self.companions],
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "GameState":
         return cls(location=data.get("location"),
                    inventory=list(data.get("inventory", [])),
-                   facts=list(data.get("facts", [])))
+                   facts=list(data.get("facts", [])),
+                   companions=[CompanionState.from_dict(item) for item in data.get("companions", [])])
 
     def to_context(self) -> str:
         location = self.location or "неизвестна"
@@ -57,4 +71,6 @@ class GameState:
             f"Текущая локация: {location}\n"
             f"Инвентарь: {inventory}\n"
             f"Установленные факты:\n{facts}"
+            + ("\nСпутники:\n" + "\n".join(item.to_context() for item in self.companions)
+               if self.companions else "")
         )

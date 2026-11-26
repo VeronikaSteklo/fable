@@ -2,6 +2,8 @@ from langchain.tools import tool
 from langchain_core.tools import BaseTool
 from typing import Protocol
 
+from fable.application.companions import CompanionVoice
+from fable.domain.models import GameSetup
 from fable.domain.state import GameState
 
 
@@ -11,10 +13,12 @@ class StoryMemory(Protocol):
     def search(self, query: str) -> list[str]: ...
 
 
-def create_master_tools(state: GameState, memory: StoryMemory | None = None) -> list[BaseTool]:
+def create_master_tools(state: GameState, memory: StoryMemory | None = None, *,
+                        setup: GameSetup | None = None,
+                        companion_voice: CompanionVoice | None = None) -> list[BaseTool]:
     @tool
     def read_game_state() -> str:
-        """Прочитать текущую локацию, инвентарь и установленные факты игры."""
+        """Прочитать текущую локацию, инвентарь, факты игры и состояние спутников."""
         return state.to_context()
 
     @tool
@@ -34,6 +38,40 @@ def create_master_tools(state: GameState, memory: StoryMemory | None = None) -> 
         return f"Состояние игры обновлено.\n{state.to_context()}"
 
     tools: list[BaseTool] = [read_game_state, update_game_state]
+
+    if setup is not None and setup.companions and companion_voice is not None:
+        profiles = {item.name.casefold(): item for item in setup.companions}
+
+        @tool
+        def ask_companion(name: str, situation: str) -> str:
+            """Получить реакцию присутствующего спутника. Передай только то, что он видит и слышит."""
+            companion = state.companion(name)
+            profile = profiles.get(name.strip().casefold())
+            if companion is None or profile is None:
+                return f"Спутник «{name}» не найден."
+            if not companion.present:
+                return f"{companion.name} не рядом и не может отреагировать."
+            return companion_voice.speak(companion, profile, situation)
+
+        @tool
+        def update_companion(name: str, attitude_change: int = 0, note: str | None = None,
+                             present: bool | None = None) -> str:
+            """Записать подтверждённые изменения отношения, знаний или присутствия спутника.
+
+            Отношение меняй небольшими шагами после значимых действий героя.
+            Заметка — только то, что спутник действительно узнал; уход требует сюжетной причины.
+            """
+            companion = state.companion(name)
+            if companion is None or name.strip().casefold() not in profiles:
+                return f"Спутник «{name}» не найден."
+            companion.change_attitude(attitude_change)
+            if note is not None:
+                companion.remember(note)
+            if present is not None:
+                companion.set_present(present)
+            return companion.to_context()
+
+        tools.extend([ask_companion, update_companion])
 
     if memory is not None:
 
