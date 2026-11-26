@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from statistics import mean, median
 
-from fable.infrastructure.evaluation_judge import SCORE_KEYS
+from fable.infrastructure.checks.judge import SCORE_KEYS
 
 
 def _mean(values):

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import re
 
-from fable.domain.models import GameSetup
+from fable.domain.game.setup import GameSetup
 
 
 @dataclass(frozen=True)

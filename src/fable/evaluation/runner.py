@@ -29,7 +29,7 @@ def run_experiments(scenarios, configs, models, settings, out: Path, *, judge=No
             judge = FakeJudge()
         else:
             from fable.bootstrap import _model
-            from fable.infrastructure.evaluation_judge import LLMJudge
+            from fable.infrastructure.checks.judge import LLMJudge
             judge = LLMJudge(_model(settings, judge_model or settings.model))
     skipped, runs = [], []
     manifest = dict(dry_run=dry_run, repeat=repeat, action_limit=turns, models=models,

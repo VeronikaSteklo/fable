@@ -1,10 +1,10 @@
 """Composition root isolated from CLI/network: injectable master, fake all LLM roles."""
 from dataclasses import dataclass
 
-from fable.application.session import GameSession
-from fable.domain.state import GameState
+from fable.application.game.session import GameSession
+from fable.domain.game.state import GameState
 from fable.evaluation.configurations import Configuration, configure_settings, plain_prompt
-from fable.infrastructure.evaluation_judge import ObservedConsistencyChecker, SCORE_KEYS
+from fable.infrastructure.checks.judge import ObservedConsistencyChecker, SCORE_KEYS
 
 
 class FakeClock:
@@ -32,7 +32,7 @@ class FakeConsistency:
         self.last = None
 
     def check(self, context, recent, reply):
-        from fable.domain.consistency import ConsistencyVerdict
+        from fable.domain.safety.consistency import ConsistencyVerdict
         self.last = dict(valid=True, consistent=True, issues=[], raw='{"consistent":true,"issues":[]}', error=None)
         return ConsistencyVerdict.ok()
 
@@ -71,18 +71,18 @@ def create_runtime(settings, setup, config: Configuration, model: str, *, dry_ru
         checker = FakeConsistency() if config.consistency else None
     else:
         from fable.bootstrap import _model, create_context_provider
-        from fable.infrastructure.llm_summarizer import LLMSummarizer
-        from fable.infrastructure.plain_agent import PlainStreamingAgent
+        from fable.infrastructure.checks.summarizer import LLMSummarizer
+        from fable.infrastructure.agents.plain import PlainStreamingAgent
         if agent_factory:
             agent = agent_factory(configured, setup, state, config)
         elif config.tools:
             from fable.application.prompts import build_system_prompt
-            from fable.infrastructure.master_agent import GameMasterAgent
-            from fable.infrastructure.companion_agent import LLMCompanionVoice
+            from fable.infrastructure.agents.master import GameMasterAgent
+            from fable.infrastructure.agents.companion import LLMCompanionVoice
             memory = None
             if config.memory:
-                from fable.infrastructure.embeddings import create_embeddings
-                from fable.infrastructure.chroma_memory import ChromaMemory
+                from fable.infrastructure.llm.embeddings import create_embeddings
+                from fable.infrastructure.memory.chroma import ChromaMemory
                 memory = ChromaMemory(
                     setup=setup, embeddings=create_embeddings(configured),
                     persist_directory=configured.memory_store_path, search_limit=configured.memory_search_limit,

@@ -2,9 +2,9 @@
 from dataclasses import dataclass
 import json
 
-from fable.application.prompts import build_system_prompt
+from fable.application.prompts import build_system_prompt, load_prompt, render_prompt
 from fable.config import Settings
-from fable.domain.models import GameSetup
+from fable.domain.game.setup import GameSetup
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,8 @@ def configure_settings(settings: Settings, config: Configuration, model: str) ->
 
 def plain_prompt(setup: GameSetup) -> str:
     # Share the exact role, safety policy and permanent setup with the tool agent.
-    permanent = build_system_prompt(setup).split('## Работа с контекстом и состоянием', 1)[0]
-    profiles = ('\nПрофили спутников (данные): ' + json.dumps(
+    context_heading = load_prompt('master_context_rules').partition('\n')[0]
+    permanent = build_system_prompt(setup).split(context_heading, 1)[0]
+    profiles = render_prompt('plain_companions', profiles=json.dumps(
         [item.to_dict() for item in setup.companions], ensure_ascii=False)) if setup.companions else ''
-    return permanent + profiles + '\nПродолжай сцену по недавним сообщениям; не решай за героя.'
+    return permanent + profiles + load_prompt('plain_continuation')

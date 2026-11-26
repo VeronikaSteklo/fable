@@ -5,20 +5,20 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from fable.application.guardrails import CompositeGuardrail, RuleGuardrail
-from fable.application.prompts import build_system_prompt
-from fable.application.session import GameSession
+from fable.application.safety.guardrails import CompositeGuardrail, RuleGuardrail
+from fable.application.prompts import build_system_prompt, render_prompt
+from fable.application.game.session import GameSession
 from fable.config import Settings
-from fable.domain.models import GameSetup
-from fable.domain.state import GameState
-from fable.infrastructure.chroma_memory import ChromaMemory
-from fable.infrastructure.companion_agent import LLMCompanionVoice
-from fable.infrastructure.llm_consistency import LLMConsistencyChecker
-from fable.infrastructure.llm_moderator import LLMModerator
-from fable.infrastructure.llm_summarizer import LLMSummarizer
-from fable.infrastructure.master_agent import GameMasterAgent
-from fable.infrastructure.openai_client import ChatModel, build_client
-from fable.infrastructure.embeddings import create_embeddings
+from fable.domain.game.setup import GameSetup
+from fable.domain.game.state import GameState
+from fable.infrastructure.memory.chroma import ChromaMemory
+from fable.infrastructure.agents.companion import LLMCompanionVoice
+from fable.infrastructure.checks.consistency import LLMConsistencyChecker
+from fable.infrastructure.checks.moderator import LLMModerator
+from fable.infrastructure.checks.summarizer import LLMSummarizer
+from fable.infrastructure.agents.master import GameMasterAgent
+from fable.infrastructure.llm.client import ChatModel, build_client
+from fable.infrastructure.llm.embeddings import create_embeddings
 
 
 def validate_settings(settings: Settings) -> None:
@@ -83,15 +83,17 @@ def _model(settings: Settings, model: str | None, *, temperature: float = 0) -> 
 
 def create_context_provider(setup: GameSetup, state: GameState) -> Callable[[], str]:
     character = setup.character
-    permanent = (
-        f"Мир: {setup.world}\nЗавязка истории: {setup.story}\nЖанр: {character.genre}\n"
-        f"Имя: {character.name}\nРоль: {character.role}\nЦель: {character.goal}\n"
-        f"Описание: {character.description or 'не указано'}"
+    permanent = render_prompt(
+        'narrative_context', world=setup.world, story=setup.story, genre=character.genre,
+        name=character.name, role=character.role, goal=character.goal,
+        description=character.description or 'не указано',
     )
     if setup.companions:
-        permanent += "\nПрофили спутников:\n" + "\n".join(
-            f"{item.name}: {item.role}; {item.personality}" for item in setup.companions
-        )
+        permanent += render_prompt('narrative_companions', profiles="\n".join(
+            render_prompt('narrative_companion_profile', name=item.name,
+                          role=item.role, personality=item.personality)
+            for item in setup.companions
+        ))
     return lambda: permanent + "\n\n" + state.to_context()
 
 

@@ -1,15 +1,15 @@
-"""Application boundaries. Existing protocol import paths remain compatible."""
+"""Shared application boundaries for agents, memory and campaign repositories."""
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Protocol
 
-from fable.domain.game import Game
+from fable.domain.game.game import Game
 
 # Re-export established ports without forcing callers to migrate imports.
-from fable.application.companions import CompanionVoice as CompanionVoice
-from fable.application.consistency import ConsistencyChecker as ConsistencyChecker
-from fable.application.guardrails import Guardrail as Guardrail
-from fable.application.summary import Summarizer as Summarizer
+from fable.application.companions.ports import CompanionVoice as CompanionVoice
+from fable.application.narrative.consistency import ConsistencyChecker as ConsistencyChecker
+from fable.application.safety.guardrails import Guardrail as Guardrail
+from fable.application.narrative.summary import Summarizer as Summarizer
 
 
 @dataclass(frozen=True)
