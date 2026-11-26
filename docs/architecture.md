@@ -5,6 +5,40 @@ Fable разделяет правила кампании, сценарии пр�
 объяснять ответственность кода, но не требуют отдельных процессов или баз данных.
 Домен не зависит от FastAPI, OpenAI SDK, ChromaDB и файловой системы.
 
+## Карта пакетов
+
+Все пути ниже относятся к `src/fable/`; небольшие `__init__.py` обозначают пакеты.
+
+```text
+domain/         game/{game,setup,state,events}.py
+                companions/companion.py, safety/{safety,consistency}.py, users/user.py
+application/    game/{service,session,persistence}.py, narrative/{summary,consistency}.py
+                companions/ports.py, safety/guardrails.py, auth/service.py, ports.py
+                prompts/{loader,master,companion,start}.py, prompts/templates/*.md
+infrastructure/ llm/{client,structured,embeddings}.py
+                agents/{master,plain,companion,tools,master_tools}.py
+                checks/{moderator,consistency,summarizer,judge}.py
+                persistence/{session_store,game_repository,auth_store}.py
+                memory/chroma.py, security/passwords.py
+presentation/   web/{app,auth,schemas,sse}.py, cli/main.py
+evaluation/     cli.py, configurations.py, factory.py, runner.py, reporting.py, scenarios.py
+bootstrap.py    общая композиция; config.py — настройки; game.py — запуск через python -m
+```
+
+Тексты ролей, правил, начальной сцены, summary/consistency/moderator/judge,
+инструкции baseline, служебные замечания и описания инструментов находятся каждый
+в отдельном `application/prompts/templates/*.md`. `load_prompt(name)` читает UTF-8
+через `importlib.resources` и кэширует строку **без strip и добавления перевода строки**.
+`render_prompt` использует только `string.Template` (`${name}`): фигурные скобки JSON
+остаются литералами, подставленные данные не обрабатываются повторно. Builders
+сохраняют прежние JSON-профили, ограничения длины и точные байты вывода; snapshots
+в `tests/fixtures/prompts_before_refactor.json` сняты до переноса.
+
+Тесты зеркалят слои и контексты в `tests/{domain,application,infrastructure,presentation,evaluation}`;
+во всех пакетах есть `__init__.py`. Проверка: `poetry run python -m unittest discover -s tests`
+(также поддерживается `-t .`). CLI entry points: `presentation.cli.main:main`,
+`presentation.web.app:main`, `evaluation.cli:main` (с префиксом `fable.`).
+
 ## Единый язык
 
 | Термин | Значение |
@@ -27,28 +61,28 @@ Fable разделяет правила кампании, сценарии пр�
 
 | Контекст | Модули и граница |
 | --- | --- |
-| Игровой процесс | `domain/game.py`, `state.py`, `events.py`; сценарии — `application/game_service.py`. Владеет кампанией и завершением хода. |
-| Персонажи / спутники | `domain/models.py`, `companion.py`; порт голоса — `application/companions.py`, адаптер — `infrastructure/companion_agent.py`. Состояние спутника входит в кампанию, это не отдельный сохраняемый агрегат. |
-| Повествовательная память | `application/session.py`, `summary.py`, `consistency.py`, `prompts.py`; JSON-история, LLM-резюме и проверка, `infrastructure/chroma_memory.py`. Векторные воспоминания отделены от подтверждённых фактов мира. |
-| Безопасность | `domain/safety.py`, `application/guardrails.py`, `infrastructure/llm_moderator.py`. Решение о допустимости отделено от генерации сцены. |
-| Пользователи | `domain/user.py`, `application/auth.py`, `infrastructure/auth_store.py`, `security.py`, `presentation/auth.py`. Аутентификация, cookie, изоляция сохранений; не правила сюжета. |
+| Игровой процесс | `domain/game/game.py`, `domain/game/state.py`, `domain/game/events.py`; сценарии — `application/game/service.py`. Владеет кампанией и завершением хода. |
+| Персонажи / спутники | `domain/game/setup.py`, `domain/companions/companion.py`; порт голоса — `application/companions/ports.py`, адаптер — `infrastructure/agents/companion.py`. Состояние спутника входит в кампанию, это не отдельный сохраняемый агрегат. |
+| Повествовательная память | `application/game/session.py`, `application/narrative/summary.py`, `application/narrative/consistency.py`, `application/prompts/`; JSON-история, LLM-резюме и проверка, `infrastructure/memory/chroma.py`. Векторные воспоминания отделены от подтверждённых фактов мира. |
+| Безопасность | `domain/safety/safety.py`, `application/safety/guardrails.py`, `infrastructure/checks/moderator.py`. Решение о допустимости отделено от генерации сцены. |
+| Пользователи | `domain/users/user.py`, `application/auth/service.py`, `infrastructure/persistence/auth_store.py`, `infrastructure/security/passwords.py`, `presentation/web/auth.py`. Аутентификация, cookie, изоляция сохранений; не правила сюжета. |
 
 Контексты пока связаны прямыми вызовами Python. События служат объяснимой лентой
 изменений для игрока, а не распределённой шиной сообщений или event sourcing.
 
 ## Агрегат, сущности и объекты-значения
 
-- **Корень агрегата `Game`** (`domain/game.py`): `id`, `owner_id`, `setup`, `state`,
+- **Корень агрегата `Game`** (`domain/game/game.py`): `id`, `owner_id`, `setup`, `state`,
   `created_at`, `updated_at`. `Game.create(id, owner_id, setup, now)` проверяет
   настройки и создаёт начальные состояния спутников. `owner_id=None` допустим для
   CLI и старых файлов. `pull_events()` забирает и очищает события вложенного состояния.
-- **Сущность состояния мира `GameState`** (`domain/state.py`): изменения только
+- **Сущность состояния мира `GameState`** (`domain/game/state.py`): изменения только
   через `update()`, получение спутника через `companion(name)`. Пустые значения не
   добавляются; предметы и факты не дублируются без учёта регистра. Удаление предмета
   имеет приоритет над добавлением в одном вызове. Повтор той же локации не событие.
   `restore()` восстанавливает снимок на том же объекте и очищает события: инструменты
   и провайдер контекста удерживают ссылку на него.
-- **Сущность `CompanionState`** (`domain/companion.py`): идентифицируется именем
+- **Сущность `CompanionState`** (`domain/companions/companion.py`): идентифицируется именем
   внутри кампании. `change_attitude()` ограничивает шаг до ±25; итог в диапазоне
   −100…100. `remember()` убирает пробелы, не добавляет пустые/повторные заметки,
   хранит последние 20. `set_present()` фиксирует уход/возвращение. Загрузка личных
@@ -69,7 +103,7 @@ Fable разделяет правила кампании, сценарии пр�
 
 ## Доменные события
 
-Все классы находятся в `domain/events.py`, наследуют `DomainEvent`, заморожены и
+Все классы находятся в `domain/game/events.py`, наследуют `DomainEvent`, заморожены и
 предоставляют `type`, русское `describe()` и `to_dict()`.
 
 | Класс | `type` | Дополнительные поля JSON | Условие |
@@ -99,20 +133,20 @@ API сохраняет прежние поля и добавляет:
 
 | Порт / граница | Реализация / адаптер |
 | --- | --- |
-| `GameRepository` (`application/ports.py`) | `JsonGameRepository` (`infrastructure/game_repository.py`) поверх `JsonSessionStore`: `get`, `add`, `save`, `delete`, `list_summaries` |
-| `StreamingAgent` (`application/ports.py`; переэкспорт в `session.py`) | `GameMasterAgent` (`infrastructure/master_agent.py`): собственный streaming tool-loop через OpenAI SDK; `PlainStreamingAgent` — baseline без tools |
-| `Guardrail` (`application/guardrails.py`) | `RuleGuardrail`, `CompositeGuardrail`, `LLMModerator` (OpenAI SDK + Pydantic JSON Schema) |
-| `Summarizer` (`application/summary.py`) | `LLMSummarizer` (OpenAI SDK, обычный текст) |
-| `ConsistencyChecker` (`application/consistency.py`) | `LLMConsistencyChecker` (OpenAI SDK + Pydantic JSON Schema) |
-| `CompanionVoice` (`application/companions.py`) | `LLMCompanionVoice` (OpenAI SDK, обычный текст) |
+| `GameRepository` (`application/ports.py`) | `JsonGameRepository` (`infrastructure/persistence/game_repository.py`) поверх `JsonSessionStore`: `get`, `add`, `save`, `delete`, `list_summaries` |
+| `StreamingAgent` (`application/ports.py`; переэкспорт в `session.py`) | `GameMasterAgent` (`infrastructure/agents/master.py`): собственный streaming tool-loop через OpenAI SDK; `PlainStreamingAgent` — baseline без tools |
+| `Guardrail` (`application/safety/guardrails.py`) | `RuleGuardrail`, `CompositeGuardrail`, `LLMModerator` (OpenAI SDK + Pydantic JSON Schema) |
+| `Summarizer` (`application/narrative/summary.py`) | `LLMSummarizer` (OpenAI SDK, обычный текст) |
+| `ConsistencyChecker` (`application/narrative/consistency.py`) | `LLMConsistencyChecker` (OpenAI SDK + Pydantic JSON Schema) |
+| `CompanionVoice` (`application/companions/ports.py`) | `LLMCompanionVoice` (OpenAI SDK, обычный текст) |
 | `StoryMemory` (`application/ports.py`; переэкспорт в `master_tools.py`) | `ChromaMemory`: прямой `chromadb.PersistentClient`, SDK embeddings, фильтр `campaign_id` |
-| `AuthStore` (`application/auth.py`) | `SqliteAuthStore` |
+| `AuthStore` (`application/auth/service.py`) | `SqliteAuthStore` |
 | Фабрики репозитория и сессии, нормализация настроек, часы, генератор id | Внедряются в `GameService`; HTTP-композиция в `create_app`, создание LLM-компонентов в `bootstrap.py` |
-| Входной HTTP-адаптер | `presentation/web.py`: HTTP-модели, коды ошибок, сериализация SSE, auth и static mount |
-| Входной CLI-адаптер | `presentation/cli.py`: интерактивный UX, тот же агрегат и репозиторий в корне каталога сохранений |
+| Входной HTTP-адаптер | `presentation/web/`: `app.py` — маршруты, ошибки и static mount; `schemas.py` — запросы, `sse.py` — сериализация и cleanup, `auth.py` — cookie |
+| Входной CLI-адаптер | `presentation/cli/main.py`: интерактивный UX, тот же агрегат и репозиторий в корне каталога сохранений |
 
 `application/ports.py` также переэкспортирует `Guardrail`, `Summarizer`,
-`ConsistencyChecker`, `CompanionVoice`; старые пути импорта остаются рабочими.
+`ConsistencyChecker`, `CompanionVoice`. Прямые импорты используют контекстные подпакеты; shim-модулей по прежним плоским путям нет.
 Репозиторий возвращает `StoredGame | None`, не создаёт LLM-сессию при чтении и
 сохраняет прежнюю структуру файла с добавлением необязательного `owner_id`.
 Старые файлы без владельца/спутников читаются через `parse_game_record`;
@@ -122,25 +156,25 @@ API сохраняет прежние поля и добавляет:
 
 ## LLM-транспорт и инструменты
 
-`infrastructure/openai_client.py` — единственная фабрика `OpenAI(base_url, api_key,
+`infrastructure/llm/client.py` — единственная фабрика `OpenAI(base_url, api_key,
 timeout, max_retries)`; `ChatModel` хранит идентификатор модели и параметры запроса.
 Мастер и static-baseline используют общий `thinking_extra_body`; вспомогательные роли
 сохраняют прежние температуры и не передают thinking-расширений.
-`structured_models.py` содержит схемы модерации, consistency, оценок и probes.
+`infrastructure/llm/structured.py` содержит схемы модерации, consistency, оценок и probes и общий helper структурированного ответа.
 `complete_structured` запрашивает строгий `response_format=json_schema`, при отказе
 сервера последовательно пробует `json_object` и инструкцию без response_format.
 `STRUCTURED_OUTPUT` задаёт начальный режим. Pydantic-валидация и прежние парсеры
 сохраняют fail-open игрового приложения, но не маскируют невалидные оценки в стенде.
 
-`tools.py` определяет минимальный `Tool`: имя, описание, JSON Schema из небольшой
-Pydantic-модели аргументов и обработчик. `master_tools.py` связывает их с доменом.
+`infrastructure/agents/tools.py` определяет минимальный `Tool`: имя, описание, JSON Schema из небольшой
+Pydantic-модели аргументов и обработчик. `infrastructure/agents/master_tools.py` связывает их с доменом.
 Мастер собирает tool-call deltas по индексу (id, имя, фрагменты JSON), сохраняет
 assistant content и tool_calls в локальном контексте, последовательно исполняет
 вызовы и добавляет сообщения `role=tool`. Неизвестный tool, неверный JSON или
 ошибка валидации возвращают русское сообщение об ошибке, не обрывая ход.
 В публичный поток поступает только `delta.content`, никогда не результаты tools.
 После `MAX_TOOL_ROUNDS` раундов исполнения выполняется финальный запрос с
-`tool_choice="none"`. SDK-поток закрывается и при отмене генерации.
+`tool_choice="none"`. Накопленные вызовы с непустым именем исполняются независимо от `finish_reason` (`tool_calls`, `stop`, `None`); в финальном раунде инструменты не исполняются. SDK-поток закрывается и при отмене генерации.
 
 ## Прикладной сервис
 
@@ -198,17 +232,17 @@ CLI намеренно сохраняет собственный интерак�
 
 ```mermaid
 flowchart TD
-    HTTP["presentation/web.py — HTTP, auth, SSE"] --> SERVICE["application/GameService — сценарии и lock"]
-    CLI["presentation/cli.py — терминал"] --> DOMAIN["domain/Game → GameState → CompanionState"]
+    HTTP["presentation/web/app.py — HTTP, auth, SSE"] --> SERVICE["application/game/service.py: GameService — сценарии и lock"]
+    CLI["presentation/cli/main.py — терминал"] --> DOMAIN["domain/game + domain/companions"]
     CLI --> PORT["application/GameRepository + StoredGame"]
     SERVICE --> DOMAIN
-    DOMAIN --> EVENTS["domain/DomainEvent — изменения"]
-    SERVICE --> SESSION["application/GameSession — история, проверки, резюме"]
+    DOMAIN --> EVENTS["domain/game/events.py: DomainEvent — изменения"]
+    SERVICE --> SESSION["application/game/session.py: GameSession — история, проверки, резюме"]
     SERVICE --> PORT
-    JSON["infrastructure/JsonGameRepository"] -. реализует .-> PORT
+    JSON["infrastructure/persistence: JsonGameRepository"] -. реализует .-> PORT
     JSON --> STORE["JsonSessionStore — JSON"]
     SESSION --> AGENTPORT["StreamingAgent, Guardrail, Summarizer, ConsistencyChecker"]
-    LLM["infrastructure/LLM-адаптеры и master_tools"] -. реализуют .-> AGENTPORT
+    LLM["infrastructure/agents + checks + llm"] -. реализуют .-> AGENTPORT
     LLM --> DOMAIN
     ROOT["bootstrap.py + create_app — композиция"] -. внедряет .-> SERVICE
     ROOT -. создаёт .-> LLM

@@ -6,6 +6,23 @@
 
 Архитектура и единый язык предметной области: [docs/architecture.md](docs/architecture.md).
 
+## Структура Python-пакета
+
+`src/fable` разделён по слоям и контекстам: `domain/{game,companions,safety,users}`,
+`application/{game,narrative,companions,safety,auth,prompts}`,
+`infrastructure/{llm,agents,checks,persistence,memory,security}`,
+`presentation/{web,cli}` и `evaluation`. Общая композиция — `bootstrap.py`.
+Каждый промпт хранится отдельно в `src/fable/application/prompts/templates/*.md`;
+ресурсы включены в wheel, placeholders имеют формат `${name}` (`string.Template`).
+Тесты зеркалят слои и контексты в `tests/`; запуск:
+
+```bash
+poetry run python -m unittest discover -s tests
+```
+
+Python entry points: `fable.presentation.cli.main:main`,
+`fable.presentation.web.app:main`, `fable.evaluation.cli:main`.
+
 ## Требования
 
 - Python 3.12 или новее

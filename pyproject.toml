@@ -16,8 +16,8 @@ dependencies = [
 ]
 
 [project.scripts]
-fable = "fable.game:main"
-fable-server = "fable.presentation.web:main"
+fable = "fable.presentation.cli.main:main"
+fable-server = "fable.presentation.web.app:main"
 fable-eval = "fable.evaluation.cli:main"
 
 [tool.poetry]
